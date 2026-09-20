@@ -1,3 +1,4 @@
+import time
 from typing import Any, Callable
 
 from app.workers.queue import TaskQueue
@@ -68,3 +69,7 @@ class Worker:
                         "attempt": attempt,
                         "error": str(exc),
                     }
+
+                time.sleep(
+                    self.retry_policy.get_delay(attempt)
+                )

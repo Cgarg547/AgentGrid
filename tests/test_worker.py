@@ -105,7 +105,10 @@ def test_worker_retries_failed_agent():
         agent_handlers={
             "research-agent": flaky_handler,
         },
-        retry_policy=RetryPolicy(max_attempts=3),
+        retry_policy=RetryPolicy(
+            max_attempts=3,
+            base_delay=0
+        ),
     )
 
     queue.enqueue(
@@ -144,7 +147,10 @@ def test_worker_fails_after_max_attempts():
         agent_handlers={
             "research-agent": failing_handler,
         },
-        retry_policy=RetryPolicy(max_attempts=3),
+        retry_policy=RetryPolicy(
+            max_attempts=3,
+            base_delay=0,
+        ),
     )
 
     queue.enqueue(
