@@ -1,8 +1,10 @@
+import time
 from uuid import uuid4
 
 from app.workers.queue import TaskQueue
 from app.workers.retry import RetryPolicy
 from app.workers.task_status import TaskStatus
+from app.workers.timeout import TimeoutPolicy
 from app.workers.worker import Worker
 
 
@@ -107,7 +109,7 @@ def test_worker_retries_failed_agent():
         },
         retry_policy=RetryPolicy(
             max_attempts=3,
-            base_delay=0
+            base_delay=0,
         ),
     )
 
@@ -169,3 +171,46 @@ def test_worker_fails_after_max_attempts():
     assert result["attempt"] == 3
     assert result["error"] == "Permanent failure."
     assert attempts["count"] == 3
+
+
+def test_worker_fails_when_task_times_out():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-timeout-{uuid4()}"
+    )
+
+    def slow_handler(**kwargs):
+        time.sleep(0.2)
+        return {"result": "too slow"}
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": slow_handler,
+        },
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            base_delay=0,
+        ),
+        timeout_policy=TimeoutPolicy(
+            timeout_seconds=0.05,
+        ),
+    )
+
+    queue.enqueue(
+        {
+            "task_id": "task-timeout",
+            "agent_name": "research-agent",
+            "step_name": "research",
+            "inputs": {},
+        }
+    )
+
+    result = worker.process_one()
+
+    assert result is not None
+    assert result["task_id"] == "task-timeout"
+    assert result["status"] == TaskStatus.FAILED.value
+    assert result["attempt"] == 1
+    assert result["error"] == (
+        "Task exceeded timeout of 0.05 seconds."
+    )
