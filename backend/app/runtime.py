@@ -57,9 +57,12 @@ class AgentGridRuntime:
         if record is None:
             return None
 
-        workflow = self.workflow_registry.get(
-            record.workflow_name
-        )
+        try:
+            workflow = self.workflow_registry.get(
+                record.workflow_name
+            )
+        except KeyError:
+            return None
 
         from app.workflows.execution import WorkflowExecution
         from app.workflows.workflow_state import (
