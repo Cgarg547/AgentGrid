@@ -6,3 +6,4 @@ class TaskStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    DEAD_LETTERED = "dead_lettered"

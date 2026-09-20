@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import FastAPI
-
+from app.api.approvals import router as approval_router
 from app.api.workflows import router as workflow_router
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -19,6 +19,7 @@ app = FastAPI(
 )
 
 app.include_router(workflow_router)
+app.include_router(approval_router)
 
 
 @app.get("/")

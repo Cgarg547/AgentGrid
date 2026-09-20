@@ -1,6 +1,7 @@
 import time
 from uuid import uuid4
 
+from app.workers.dead_letter import DeadLetterQueue
 from app.workers.idempotency import IdempotencyStore
 from app.workers.queue import TaskQueue
 from app.workers.retry import RetryPolicy
@@ -79,7 +80,7 @@ def test_worker_rejects_unknown_agent():
 
     assert result is not None
     assert result["task_id"] == task_id
-    assert result["status"] == TaskStatus.FAILED.value
+    assert result["status"] == TaskStatus.DEAD_LETTERED.value
     assert result["attempt"] == 1
     assert result["error"] == (
         "No handler registered for agent "
@@ -169,7 +170,7 @@ def test_worker_fails_after_max_attempts():
     result = worker.process_one()
 
     assert result is not None
-    assert result["status"] == TaskStatus.FAILED.value
+    assert result["status"] == TaskStatus.DEAD_LETTERED.value
     assert result["attempt"] == 3
     assert result["error"] == "Permanent failure."
     assert attempts["count"] == 3
@@ -210,7 +211,7 @@ def test_worker_fails_when_task_times_out():
     result = worker.process_one()
 
     assert result is not None
-    assert result["status"] == TaskStatus.FAILED.value
+    assert result["status"] == TaskStatus.DEAD_LETTERED.value
     assert result["attempt"] == 1
     assert result["error"] == (
         "Task exceeded timeout of 0.05 seconds."
@@ -310,3 +311,101 @@ def test_worker_rejects_task_already_claimed_by_another_worker():
     assert result["status"] == TaskStatus.FAILED.value
     assert result["attempt"] == 1
     assert result["error"] == "Task is already being processed."
+
+
+def test_worker_sends_permanent_failure_to_dead_letter_queue():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-dlq-{uuid4()}"
+    )
+
+    dead_letter_queue = DeadLetterQueue(
+        f"test-agentgrid-dlq-{uuid4()}"
+    )
+
+    def failing_handler(**kwargs):
+        raise RuntimeError("Permanent failure.")
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": failing_handler,
+        },
+        retry_policy=RetryPolicy(
+            max_attempts=2,
+            base_delay=0,
+        ),
+        dead_letter_queue=dead_letter_queue,
+    )
+
+    task = {
+        "task_id": f"task-dlq-{uuid4()}",
+        "agent_name": "research-agent",
+        "step_name": "research",
+        "inputs": {},
+    }
+
+    queue.enqueue(task)
+
+    result = worker.process_one()
+
+    assert result is not None
+    assert result["status"] == TaskStatus.DEAD_LETTERED.value
+    assert result["attempt"] == 2
+    assert result["error"] == "Permanent failure."
+
+    dead_lettered_task = dead_letter_queue.dequeue()
+
+    assert dead_lettered_task == result
+    assert dead_letter_queue.size() == 0
+
+
+def test_worker_sends_timeout_to_dead_letter_queue():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-timeout-dlq-{uuid4()}"
+    )
+
+    dead_letter_queue = DeadLetterQueue(
+        f"test-agentgrid-timeout-dlq-{uuid4()}"
+    )
+
+    def slow_handler(**kwargs):
+        time.sleep(0.2)
+        return {"result": "too slow"}
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": slow_handler,
+        },
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            base_delay=0,
+        ),
+        timeout_policy=TimeoutPolicy(
+            timeout_seconds=0.05,
+        ),
+        dead_letter_queue=dead_letter_queue,
+    )
+
+    task = {
+        "task_id": f"task-timeout-dlq-{uuid4()}",
+        "agent_name": "research-agent",
+        "step_name": "research",
+        "inputs": {},
+    }
+
+    queue.enqueue(task)
+
+    result = worker.process_one()
+
+    assert result is not None
+    assert result["status"] == TaskStatus.DEAD_LETTERED.value
+    assert result["attempt"] == 1
+    assert result["error"] == (
+        "Task exceeded timeout of 0.05 seconds."
+    )
+
+    dead_lettered_task = dead_letter_queue.dequeue()
+
+    assert dead_lettered_task == result
+    assert dead_letter_queue.size() == 0

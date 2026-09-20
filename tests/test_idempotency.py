@@ -76,3 +76,38 @@ def test_idempotency_store_claims_task_only_once():
     assert stored == {
         "status": IdempotencyStore.CLAIMED_STATUS,
     }
+
+def test_idempotency_store_allows_reclaim_after_claim_expires():
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}",
+        claim_ttl_seconds=1,
+    )
+
+    task_id = "task-expiring-claim"
+
+    assert store.claim(task_id) is True
+    assert store.claim(task_id) is False
+
+    import time
+
+    time.sleep(1.1)
+
+    assert store.claim(task_id) is True
+
+
+def test_idempotency_store_can_renew_claim():
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}",
+        claim_ttl_seconds=2,
+    )
+
+    task_id = "task-renew"
+
+    assert store.claim(task_id) is True
+    assert store.renew_claim(task_id) is True
+
+    stored = store.get(task_id)
+
+    assert stored == {
+        "status": IdempotencyStore.CLAIMED_STATUS,
+    }

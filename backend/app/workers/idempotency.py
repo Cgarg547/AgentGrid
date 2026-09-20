@@ -8,21 +8,37 @@ class IdempotencyStore:
     CLAIMED_STATUS = "claimed"
     COMPLETED_STATUS = "completed"
 
-    def __init__(self, key_prefix: str = "agentgrid:idempotency"):
+    def __init__(
+        self,
+        key_prefix: str = "agentgrid:idempotency",
+        claim_ttl_seconds: int = 60,
+    ):
+        if claim_ttl_seconds <= 0:
+            raise ValueError(
+                "Claim TTL must be greater than 0."
+            )
+
         self.key_prefix = key_prefix
+        self.claim_ttl_seconds = claim_ttl_seconds
 
     def _build_key(self, task_id: str) -> str:
         return f"{self.key_prefix}:{task_id}"
 
     def get(self, task_id: str) -> dict[str, Any] | None:
-        value = redis_client.get(self._build_key(task_id))
+        value = redis_client.get(
+            self._build_key(task_id)
+        )
 
         if value is None:
             return None
 
         return json.loads(value)
 
-    def set(self, task_id: str, result: dict[str, Any]) -> None:
+    def set(
+        self,
+        task_id: str,
+        result: dict[str, Any],
+    ) -> None:
         redis_client.set(
             self._build_key(task_id),
             json.dumps({
@@ -39,8 +55,31 @@ class IdempotencyStore:
                     "status": self.CLAIMED_STATUS,
                 }),
                 nx=True,
+                ex=self.claim_ttl_seconds,
+            )
+        )
+
+    def renew_claim(self, task_id: str) -> bool:
+        key = self._build_key(task_id)
+
+        value = redis_client.get(key)
+
+        if value is None:
+            return False
+
+        record = json.loads(value)
+
+        if record.get("status") != self.CLAIMED_STATUS:
+            return False
+
+        return bool(
+            redis_client.expire(
+                key,
+                self.claim_ttl_seconds,
             )
         )
 
     def delete(self, task_id: str) -> None:
-        redis_client.delete(self._build_key(task_id))
+        redis_client.delete(
+            self._build_key(task_id)
+        )
