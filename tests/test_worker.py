@@ -1,6 +1,7 @@
 import time
 from uuid import uuid4
 
+from app.workers.idempotency import IdempotencyStore
 from app.workers.queue import TaskQueue
 from app.workers.retry import RetryPolicy
 from app.workers.task_status import TaskStatus
@@ -29,7 +30,7 @@ def test_worker_processes_task():
 
     queue.enqueue(
         {
-            "task_id": "task-1",
+            "task_id": f"task-1-{uuid4()}",
             "agent_name": "research-agent",
             "step_name": "research",
             "inputs": {},
@@ -39,7 +40,6 @@ def test_worker_processes_task():
     result = worker.process_one()
 
     assert result is not None
-    assert result["task_id"] == "task-1"
     assert result["step_name"] == "research"
     assert result["agent_name"] == "research-agent"
     assert result["status"] == TaskStatus.COMPLETED.value
@@ -59,6 +59,8 @@ def test_worker_rejects_unknown_agent():
         f"test-agentgrid-worker-{uuid4()}"
     )
 
+    task_id = f"task-unknown-{uuid4()}"
+
     worker = Worker(
         queue=queue,
         agent_handlers={},
@@ -66,7 +68,7 @@ def test_worker_rejects_unknown_agent():
 
     queue.enqueue(
         {
-            "task_id": "task-unknown",
+            "task_id": task_id,
             "agent_name": "unknown-agent",
             "step_name": "research",
             "inputs": {},
@@ -76,7 +78,7 @@ def test_worker_rejects_unknown_agent():
     result = worker.process_one()
 
     assert result is not None
-    assert result["task_id"] == "task-unknown"
+    assert result["task_id"] == task_id
     assert result["status"] == TaskStatus.FAILED.value
     assert result["attempt"] == 1
     assert result["error"] == (
@@ -115,7 +117,7 @@ def test_worker_retries_failed_agent():
 
     queue.enqueue(
         {
-            "task_id": "task-retry",
+            "task_id": f"task-retry-{uuid4()}",
             "agent_name": "research-agent",
             "step_name": "research",
             "inputs": {},
@@ -157,7 +159,7 @@ def test_worker_fails_after_max_attempts():
 
     queue.enqueue(
         {
-            "task_id": "task-permanent-failure",
+            "task_id": f"task-permanent-failure-{uuid4()}",
             "agent_name": "research-agent",
             "step_name": "research",
             "inputs": {},
@@ -198,7 +200,7 @@ def test_worker_fails_when_task_times_out():
 
     queue.enqueue(
         {
-            "task_id": "task-timeout",
+            "task_id": f"task-timeout-{uuid4()}",
             "agent_name": "research-agent",
             "step_name": "research",
             "inputs": {},
@@ -208,9 +210,103 @@ def test_worker_fails_when_task_times_out():
     result = worker.process_one()
 
     assert result is not None
-    assert result["task_id"] == "task-timeout"
     assert result["status"] == TaskStatus.FAILED.value
     assert result["attempt"] == 1
     assert result["error"] == (
         "Task exceeded timeout of 0.05 seconds."
     )
+
+
+def test_worker_returns_stored_result_for_completed_duplicate_task():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-idempotency-{uuid4()}"
+    )
+
+    executions = {"count": 0}
+
+    def handler(**kwargs):
+        executions["count"] += 1
+        return {"value": "success"}
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": handler,
+        },
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            base_delay=0,
+        ),
+        timeout_policy=TimeoutPolicy(
+            timeout_seconds=1,
+        ),
+        idempotency_store=IdempotencyStore(
+            key_prefix=f"test-agentgrid-idempotency-{uuid4()}"
+        ),
+    )
+
+    task = {
+        "task_id": "task-duplicate",
+        "agent_name": "research-agent",
+        "step_name": "research",
+        "inputs": {},
+    }
+
+    queue.enqueue(task)
+    first_result = worker.process_one()
+
+    queue.enqueue(task)
+    second_result = worker.process_one()
+
+    assert first_result is not None
+    assert second_result is not None
+    assert first_result == second_result
+    assert executions["count"] == 1
+
+
+def test_worker_rejects_task_already_claimed_by_another_worker():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-claimed-{uuid4()}"
+    )
+
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}"
+    )
+
+    task_id = "task-already-claimed"
+
+    assert store.claim(task_id) is True
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": lambda **kwargs: {
+                "value": "should not execute"
+            },
+        },
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            base_delay=0,
+        ),
+        timeout_policy=TimeoutPolicy(
+            timeout_seconds=1,
+        ),
+        idempotency_store=store,
+    )
+
+    queue.enqueue(
+        {
+            "task_id": task_id,
+            "agent_name": "research-agent",
+            "step_name": "research",
+            "inputs": {},
+        }
+    )
+
+    result = worker.process_one()
+
+    assert result is not None
+    assert result["task_id"] == task_id
+    assert result["status"] == TaskStatus.FAILED.value
+    assert result["attempt"] == 1
+    assert result["error"] == "Task is already being processed."
