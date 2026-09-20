@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: agentgrid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentgrid
+      POSTGRES_USER: agentgrid
+      POSTGRES_PASSWORD: agentgrid_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - agentgrid_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  agentgrid_postgres_data:
