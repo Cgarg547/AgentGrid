@@ -5,6 +5,9 @@ from app.core.database import SessionLocal
 from app.services.postgres_execution_repository import (
     PostgresExecutionRepository,
 )
+from app.services.postgres_workflow_repository import (
+    PostgresWorkflowRepository,
+)
 from app.services.workflow_service import WorkflowService
 from app.tools.registry import ToolRegistry
 from app.workflows.examples import create_research_workflow
@@ -19,6 +22,10 @@ class AgentGridRuntime:
 
         self.execution_repository = (
             PostgresExecutionRepository(SessionLocal)
+        )
+
+        self.workflow_repository = (
+            PostgresWorkflowRepository(SessionLocal)
         )
 
         self.agent_handlers: dict[str, Any] = {
@@ -36,9 +43,20 @@ class AgentGridRuntime:
         self._register_workflows()
 
     def _register_workflows(self) -> None:
-        self.workflow_registry.register(
-            create_research_workflow()
-        )
+        workflow = create_research_workflow()
+
+        self.workflow_repository.save(workflow)
+        self._load_persisted_workflows()
+
+    def _load_persisted_workflows(self) -> None:
+        workflows = self.workflow_repository.list()
+
+        for workflow in workflows:
+            if workflow.name not in {
+                existing.name
+                for existing in self.workflow_registry.list()
+            }:
+                self.workflow_registry.register(workflow)
 
     def execute_workflow(self, workflow_name: str):
         execution = self.workflow_service.execute(
