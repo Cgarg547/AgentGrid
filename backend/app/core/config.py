@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     database_url: str = ""
+    redis_url: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(
         env_file="../.env",
