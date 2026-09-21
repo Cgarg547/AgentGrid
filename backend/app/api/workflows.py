@@ -15,17 +15,18 @@ from app.services.execution_event_repository import (
     ExecutionEventRepository,
 )
 
-
 router = APIRouter(
     prefix="/workflows",
     tags=["workflows"],
 )
 
-
 runtime = AgentGridRuntime()
 
 
-@router.get("", response_model=WorkflowListResponse)
+@router.get(
+    "",
+    response_model=WorkflowListResponse,
+)
 def list_workflows():
     return {
         "workflows": [
@@ -87,15 +88,26 @@ def get_execution(execution_id: str):
     "/executions/{execution_id}/events",
     response_model=ExecutionEventResponse,
 )
-def get_execution_events(execution_id: str):
+def get_execution_events(
+    execution_id: str,
+    event_type: str | None = None,
+):
     session = SessionLocal()
 
     try:
-        repository = ExecutionEventRepository(session)
-
-        events = repository.list_by_task(
-            execution_id
+        repository = ExecutionEventRepository(
+            session
         )
+
+        if event_type is None:
+            events = repository.list_by_task(
+                execution_id
+            )
+        else:
+            events = repository.list_by_task_and_type(
+                execution_id,
+                event_type,
+            )
 
         return {
             "task_id": execution_id,
@@ -112,5 +124,6 @@ def get_execution_events(execution_id: str):
                 for event in events
             ],
         }
+
     finally:
         session.close()

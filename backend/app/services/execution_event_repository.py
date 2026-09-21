@@ -11,12 +11,17 @@ class ExecutionEventRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def save(self, event: WorkerEvent) -> ExecutionEvent:
+    def save(
+        self,
+        event: WorkerEvent,
+    ) -> ExecutionEvent:
         record = ExecutionEvent(
             task_id=event.task_id,
             event_type=event.event_type,
             timestamp=event.timestamp,
-            data=self._serialize_data(event.data),
+            data=self._serialize_data(
+                event.data
+            ),
         )
 
         self.session.add(record)
@@ -34,7 +39,26 @@ class ExecutionEventRepository:
             .filter(
                 ExecutionEvent.task_id == task_id
             )
-            .order_by(ExecutionEvent.timestamp.asc())
+            .order_by(
+                ExecutionEvent.timestamp.asc()
+            )
+            .all()
+        )
+
+    def list_by_task_and_type(
+        self,
+        task_id: str,
+        event_type: str,
+    ) -> list[ExecutionEvent]:
+        return (
+            self.session.query(ExecutionEvent)
+            .filter(
+                ExecutionEvent.task_id == task_id,
+                ExecutionEvent.event_type == event_type,
+            )
+            .order_by(
+                ExecutionEvent.timestamp.asc()
+            )
             .all()
         )
 

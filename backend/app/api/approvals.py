@@ -1,14 +1,11 @@
 from fastapi import APIRouter, HTTPException
 
-from app.agents.agent import Agent
-from app.agents.executor import AgentExecutor
 from app.models.approval_api import (
     ApprovalExecutionResponse,
     ApprovalResponse,
 )
+from app.runtime import AgentGridRuntime
 from app.security.approval_store import ApprovalStore
-from app.tools.registry import ToolRegistry
-from app.tools.tool import Tool
 
 
 router = APIRouter(
@@ -17,37 +14,9 @@ router = APIRouter(
 )
 
 
-approval_store = ApprovalStore()
-
-
-def _create_executor() -> AgentExecutor:
-    agent = Agent(
-        name="researcher",
-        description="Research agent",
-        allowed_tools=["send_email"],
-    )
-
-    registry = ToolRegistry()
-
-    registry.register(
-        Tool(
-            name="send_email",
-            description="Send an email",
-            handler=lambda **kwargs: {
-                "message": "email sent",
-                "arguments": kwargs,
-            },
-        )
-    )
-
-    return AgentExecutor(
-        agent=agent,
-        tool_registry=registry,
-        approval_store=approval_store,
-    )
-
-
-executor = _create_executor()
+runtime = AgentGridRuntime()
+approval_store = runtime.approval_store
+executor = runtime.get_approval_executor()
 
 
 def _to_response(request) -> dict:

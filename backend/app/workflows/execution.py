@@ -24,6 +24,25 @@ class WorkflowExecution:
                 StepStatus.PENDING,
             )
 
+    @classmethod
+    def from_checkpoint(
+        cls,
+        workflow: Workflow,
+        execution_id: str,
+        status: WorkflowStatus,
+        step_statuses: dict[str, StepStatus],
+        step_results: dict[str, Any],
+    ) -> "WorkflowExecution":
+        execution = cls(
+            workflow=workflow,
+            execution_id=execution_id,
+            status=status,
+            step_statuses=step_statuses,
+            step_results=step_results,
+        )
+
+        return execution
+
     def mark_step_running(self, step_name: str) -> None:
         self._ensure_step_exists(step_name)
         self.step_statuses[step_name] = StepStatus.RUNNING
