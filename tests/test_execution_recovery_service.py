@@ -195,3 +195,104 @@ def test_workflow_execution_can_be_reconstructed_from_checkpoint():
     ) == {
         "summary": "analysis complete",
     }
+
+
+def test_recovery_service_reconstructs_partial_workflow_execution():
+    from app.workflows.examples import create_research_workflow
+    from app.workflows.execution import WorkflowExecution
+    from app.workflows.workflow_state import StepStatus, WorkflowStatus
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        future=True,
+    )
+
+    Base.metadata.create_all(engine)
+
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    execution_id = str(uuid.uuid4())
+
+    with SessionLocal() as session:
+        repository = ExecutionCheckpointRepository(
+            session
+        )
+
+        repository.save(
+            execution_id=execution_id,
+            step_name="analysis",
+            status="completed",
+            state={
+                "step_statuses": {
+                    "research": "completed",
+                    "analysis": "completed",
+                    "report": "pending",
+                },
+                "step_results": {
+                    "research": {
+                        "findings": [
+                            "finding-1",
+                        ]
+                    },
+                    "analysis": {
+                        "summary": "analysis complete",
+                    },
+                },
+            },
+        )
+
+        workflow = create_research_workflow()
+
+        service = ExecutionRecoveryService(
+            repository
+        )
+
+        recovered = service.recover_execution(
+            workflow=workflow,
+            execution_id=execution_id,
+        )
+
+        assert isinstance(
+            recovered,
+            WorkflowExecution,
+        )
+
+        assert recovered is not None
+        assert recovered.execution_id == execution_id
+        assert recovered.status == WorkflowStatus.RUNNING
+
+        assert recovered.step_statuses == {
+            "research": StepStatus.COMPLETED,
+            "analysis": StepStatus.COMPLETED,
+            "report": StepStatus.PENDING,
+        }
+
+        assert recovered.get_completed_steps() == {
+            "research",
+            "analysis",
+        }
+
+        assert recovered.get_step_result(
+            "research"
+        ) == {
+            "findings": [
+                "finding-1",
+            ]
+        }
+
+        assert recovered.get_step_result(
+            "analysis"
+        ) == {
+            "summary": "analysis complete",
+        }
+
+        assert [
+            step.name
+            for step in recovered.get_ready_steps()
+        ] == [
+            "report",
+        ]

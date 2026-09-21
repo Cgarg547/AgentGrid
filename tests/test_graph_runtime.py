@@ -47,3 +47,38 @@ def test_graph_structure_is_inspectable():
         ["analysis", "writer"],
         ["writer", "END"],
     ]
+
+def test_agent_graph_skips_completed_steps_on_resume():
+    from app.graph.runtime import build_agent_graph
+
+    graph = build_agent_graph()
+
+    updates = list(
+        graph.stream(
+            {
+                "input": "Resume workflow",
+                "completed_steps": [
+                    "research",
+                    "analysis",
+                ],
+                "research": {
+                    "findings": [
+                        "existing finding",
+                    ]
+                },
+                "analysis": {
+                    "analysis": "existing analysis",
+                },
+            }
+        )
+    )
+
+    executed_nodes = [
+        node_name
+        for update in updates
+        for node_name in update.keys()
+    ]
+
+    assert executed_nodes == [
+        "writer",
+    ]

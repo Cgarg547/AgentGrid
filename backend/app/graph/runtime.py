@@ -37,6 +37,54 @@ def _run_node(
         ) from exc
 
 
+def _route_from_start(
+    state: AgentGraphState,
+) -> str:
+    completed_steps = set(
+        state.get("completed_steps", [])
+    )
+
+    if "research" not in completed_steps:
+        return "research"
+
+    if "analysis" not in completed_steps:
+        return "analysis"
+
+    if "writer" not in completed_steps:
+        return "writer"
+
+    return END
+
+
+def _route_after_research(
+    state: AgentGraphState,
+) -> str:
+    completed_steps = set(
+        state.get("completed_steps", [])
+    )
+
+    if "analysis" not in completed_steps:
+        return "analysis"
+
+    if "writer" not in completed_steps:
+        return "writer"
+
+    return END
+
+
+def _route_after_analysis(
+    state: AgentGraphState,
+) -> str:
+    completed_steps = set(
+        state.get("completed_steps", [])
+    )
+
+    if "writer" not in completed_steps:
+        return "writer"
+
+    return END
+
+
 def build_agent_graph(
     runtime: AgentGridRuntime | None = None,
     on_node_start: Callable[[str], None] | None = None,
@@ -78,19 +126,34 @@ def build_agent_graph(
         ),
     )
 
-    graph.add_edge(
+    graph.add_conditional_edges(
         START,
-        "research",
+        _route_from_start,
+        {
+            "research": "research",
+            "analysis": "analysis",
+            "writer": "writer",
+            END: END,
+        },
     )
 
-    graph.add_edge(
+    graph.add_conditional_edges(
         "research",
-        "analysis",
+        _route_after_research,
+        {
+            "analysis": "analysis",
+            "writer": "writer",
+            END: END,
+        },
     )
 
-    graph.add_edge(
+    graph.add_conditional_edges(
         "analysis",
-        "writer",
+        _route_after_analysis,
+        {
+            "writer": "writer",
+            END: END,
+        },
     )
 
     graph.add_edge(

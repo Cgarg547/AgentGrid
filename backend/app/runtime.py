@@ -14,6 +14,12 @@ from app.services.postgres_workflow_repository import (
 from app.services.execution_checkpoint_repository import (
     ExecutionCheckpointRepository,
 )
+from app.services.distributed_workflow_executor import (
+    DistributedWorkflowExecutor,
+)
+from app.services.task_dispatcher import TaskDispatcher
+from app.workers.queue import TaskQueue
+from app.workers.result_queue import TaskResultQueue
 from app.services.workflow_service import WorkflowService
 from app.tools.registry import ToolRegistry
 from app.tools.tool import Tool
@@ -36,6 +42,23 @@ class AgentGridRuntime:
         self.workflow_repository = (
             PostgresWorkflowRepository(SessionLocal)
         )
+
+        self.distributed_task_queue = TaskQueue(
+            "agentgrid:workflow:tasks"
+        )
+
+        self.distributed_result_queue = TaskResultQueue(
+            "agentgrid:workflow:results"
+        )
+
+        self.distributed_workflow_executor = (
+            DistributedWorkflowExecutor(
+                dispatcher=TaskDispatcher(
+                self.distributed_task_queue
+            ),
+            result_queue=self.distributed_result_queue,
+        )
+    )
 
         self.agent_handlers: dict[str, Any] = {
             "research-agent": self._research_agent,
@@ -138,6 +161,20 @@ class AgentGridRuntime:
         self.execution_repository.save(execution)
 
         return execution
+
+    def execute_workflow_distributed(
+        self,
+        workflow_name: str,
+        inputs: dict[str, Any] | None = None,
+    ):
+        workflow = self.workflow_registry.get(
+            workflow_name
+        )
+
+        return self.distributed_workflow_executor.start(
+            workflow=workflow,
+            inputs=inputs,
+        )
 
     def get_execution(
         self,

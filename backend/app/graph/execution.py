@@ -11,6 +11,9 @@ from app.services.execution_event_repository import (
 from app.services.execution_checkpoint_repository import (
     ExecutionCheckpointRepository,
 )
+from app.services.execution_recovery_service import (
+    ExecutionRecoveryService,
+)
 from app.workers.events import WorkerEvent
 from app.workflows.execution import WorkflowExecution
 from app.workflows.workflow import Workflow
@@ -152,6 +155,164 @@ class LangGraphExecutionAdapter:
 
         return execution
 
+    def resume(
+        self,
+        workflow: Workflow,
+        execution_id: str,
+        inputs: dict[str, Any],
+    ) -> WorkflowExecution:
+        if self.checkpoint_repository is None:
+            raise ValueError(
+                "Checkpoint repository is required "
+                "to resume an execution."
+            )
+
+        recovery_service = ExecutionRecoveryService(
+            self.checkpoint_repository
+        )
+
+        execution = recovery_service.recover_execution(
+            workflow=workflow,
+            execution_id=execution_id,
+        )
+
+        if execution is None:
+            raise ValueError(
+                f"No checkpoint found for execution "
+                f"'{execution_id}'."
+            )
+
+        self._step_started_at = {}
+
+        graph_inputs: dict[str, Any] = {
+            **inputs,
+            "completed_steps": list(
+                execution.get_completed_steps()
+            ),
+            **execution.step_results,
+        }
+
+        workflow_started_at = perf_counter()
+
+        self._record_event(
+            event_type="workflow.resumed",
+            execution_id=execution.execution_id,
+            data={
+                "workflow_name": workflow.name,
+                "resumed_at": datetime.now(
+                    timezone.utc
+                ).isoformat(),
+                "completed_steps": list(
+                    execution.get_completed_steps()
+                ),
+            },
+        )
+
+        graph = build_agent_graph(
+            runtime=self.runtime,
+            on_node_start=lambda node_name: (
+                self._handle_node_start(
+                    execution,
+                    node_name,
+                )
+            ),
+        )
+
+        try:
+            execution.status = WorkflowStatus.RUNNING
+
+            for update in graph.stream(
+                graph_inputs
+            ):
+                self._process_graph_update(
+                    execution,
+                    update,
+                )
+
+            workflow_duration_ms = (
+                perf_counter() - workflow_started_at
+            ) * 1000
+
+            self._record_event(
+                event_type="workflow.completed",
+                execution_id=execution.execution_id,
+                data={
+                    "workflow_name": workflow.name,
+                    "status": execution.status.value,
+                    "completed_at": datetime.now(
+                        timezone.utc
+                    ).isoformat(),
+                    "duration_ms": workflow_duration_ms,
+                    "resumed": True,
+                },
+            )
+
+        except GraphNodeExecutionError as exc:
+            execution.status = WorkflowStatus.FAILED
+
+            step_name = self._get_step_name(
+                exc.node_name
+            )
+
+            execution.mark_step_failed(step_name)
+
+            step_duration_ms = self._get_step_duration_ms(
+                step_name
+            )
+
+            self._record_event(
+                event_type="step.failed",
+                execution_id=execution.execution_id,
+                data={
+                    "step_name": step_name,
+                    "node_name": exc.node_name,
+                    "error": str(
+                        exc.original_exception
+                    ),
+                    "duration_ms": step_duration_ms,
+                    "resumed": True,
+                },
+            )
+
+            self._record_event(
+                event_type="workflow.failed",
+                execution_id=execution.execution_id,
+                data={
+                    "workflow_name": workflow.name,
+                    "error": str(
+                        exc.original_exception
+                    ),
+                    "duration_ms": (
+                        perf_counter()
+                        - workflow_started_at
+                    ) * 1000,
+                    "resumed": True,
+                },
+            )
+
+            raise exc.original_exception
+
+        except Exception as exc:
+            execution.status = WorkflowStatus.FAILED
+
+            self._record_event(
+                event_type="workflow.failed",
+                execution_id=execution.execution_id,
+                data={
+                    "workflow_name": workflow.name,
+                    "error": str(exc),
+                    "duration_ms": (
+                        perf_counter()
+                        - workflow_started_at
+                    ) * 1000,
+                    "resumed": True,
+                },
+            )
+
+            raise
+
+        return execution
+
     def _handle_node_start(
         self,
         execution: WorkflowExecution,
@@ -244,7 +405,7 @@ class LangGraphExecutionAdapter:
                 "step_results": execution.step_results,
             },
         )
-        
+
     def _get_step_duration_ms(
         self,
         step_name: str,

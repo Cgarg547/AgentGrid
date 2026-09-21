@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import threading
 import time
 from typing import Any, Callable
-
+from app.workers.result_queue import TaskResultQueue
 from app.workers.dead_letter import DeadLetterQueue
 from app.workers.events import WorkerEvent
 from app.workers.idempotency import IdempotencyStore
@@ -22,6 +22,7 @@ class Worker:
         idempotency_store: IdempotencyStore | None = None,
         dead_letter_queue: DeadLetterQueue | None = None,
         event_repository: Any | None = None,
+        result_queue: TaskResultQueue | None = None,
     ):
         self.queue = queue
         self.agent_handlers = agent_handlers
@@ -34,6 +35,7 @@ class Worker:
             dead_letter_queue or DeadLetterQueue()
         )
         self.event_repository = event_repository
+        self.result_queue = result_queue
         self.events: list[WorkerEvent] = []
 
     def process_one(self) -> dict[str, Any] | None:
@@ -45,6 +47,7 @@ class Worker:
         task_id = task["task_id"]
         step_name = task["step_name"]
         agent_name = task["agent_name"]
+        execution_id = task.get("execution_id")
 
         self._record_event(
             "task_received",
@@ -158,6 +161,7 @@ class Worker:
 
                 result_payload = {
                     "task_id": task_id,
+                    "execution_id": execution_id,
                     "step_name": step_name,
                     "agent_name": agent_name,
                     "status": TaskStatus.COMPLETED.value,
@@ -169,6 +173,9 @@ class Worker:
                     task_id,
                     result_payload,
                 )
+
+                if self.result_queue is not None:
+                    self.result_queue.publish(result_payload)
 
                 self._record_event(
                     "task_completed",
