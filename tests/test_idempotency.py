@@ -111,3 +111,62 @@ def test_idempotency_store_can_renew_claim():
     assert stored == {
         "status": IdempotencyStore.CLAIMED_STATUS,
     }
+
+def test_idempotency_store_renew_claim_requires_matching_owner():
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}",
+        claim_ttl_seconds=2,
+    )
+
+    task_id = "task-owner"
+
+    assert store.claim(task_id, owner_id="worker-a") is True
+
+    assert (
+        store.renew_claim(
+            task_id,
+            owner_id="worker-b",
+        )
+        is False
+    )
+
+    assert (
+        store.renew_claim(
+            task_id,
+            owner_id="worker-a",
+        )
+        is True
+    )
+
+def test_idempotency_store_delete_requires_matching_owner():
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}",
+        claim_ttl_seconds=2,
+    )
+
+    task_id = "task-release-owner"
+
+    assert store.claim(
+        task_id,
+        owner_id="worker-a",
+    ) is True
+
+    assert (
+        store.delete(
+            task_id,
+            owner_id="worker-b",
+        )
+        is False
+    )
+
+    assert store.get(task_id) is not None
+
+    assert (
+        store.delete(
+            task_id,
+            owner_id="worker-a",
+        )
+        is True
+    )
+
+    assert store.get(task_id) is None

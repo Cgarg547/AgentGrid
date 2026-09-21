@@ -11,5 +11,6 @@ class StepStatus(str, Enum):
 class WorkflowStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"

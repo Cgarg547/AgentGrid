@@ -298,3 +298,61 @@ def test_runtime_distributed_workflow_advances_to_reports():
     assert execution.step_results["report"] == {
         "report": "Analyzed 2 findings."
     }
+
+def test_runtime_resumes_paused_distributed_workflow_and_dispatches_next_step():
+    from app.core.redis import redis_client
+    from app.runtime import AgentGridRuntime
+
+    runtime = AgentGridRuntime()
+
+    while runtime.distributed_task_queue.size() > 0:
+        runtime.distributed_task_queue.dequeue()
+
+    while runtime.distributed_result_queue.size() > 0:
+        runtime.distributed_result_queue.consume()
+
+    execution = runtime.execute_workflow_distributed(
+        workflow_name="research-pipeline",
+        inputs={"topic": "AI orchestration"},
+    )
+
+    first_task = runtime.distributed_task_queue.dequeue()
+
+    assert first_task is not None
+    assert first_task["step_name"] == "research"
+
+    paused = runtime.pause_execution(
+        execution.execution_id
+    )
+
+    assert paused is not None
+    assert paused.status.value == "paused"
+
+    research_result = {
+        "execution_id": execution.execution_id,
+        "step_name": "research",
+        "status": "completed",
+        "result": {
+            "findings": ["distributed agents"],
+        },
+    }
+
+    runtime.distributed_workflow_executor.process_result(
+        paused,
+        research_result,
+    )
+
+    assert runtime.distributed_task_queue.size() == 0
+
+    resumed = runtime.resume_execution(
+        execution.execution_id
+    )
+
+    assert resumed is not None
+    assert resumed.status.value == "running"
+
+    next_task = runtime.distributed_task_queue.dequeue()
+
+    assert next_task is not None
+    assert next_task["step_name"] == "analysis"
+    assert next_task["execution_id"] == execution.execution_id

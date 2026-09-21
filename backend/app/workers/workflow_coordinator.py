@@ -3,6 +3,7 @@ from typing import Any
 from app.services.task_dispatcher import TaskDispatcher
 from app.workers.result_queue import TaskResultQueue
 from app.workflows.execution import WorkflowExecution
+from app.workflows.workflow_state import WorkflowStatus
 
 
 class WorkflowCoordinator:
@@ -19,8 +20,11 @@ class WorkflowCoordinator:
         execution: WorkflowExecution,
         inputs: dict[str, Any] | None = None,
     ) -> list[str]:
+        if execution.status == WorkflowStatus.PAUSED:
+            return []
+
         inputs = inputs or {}
-        dispatched: list[str] = []
+        dispatched = []
 
         for step in execution.get_ready_steps():
             step_inputs = {
@@ -33,9 +37,7 @@ class WorkflowCoordinator:
 
             execution.mark_step_running(step.name)
 
-            task_id = (
-                f"{execution.execution_id}:{step.name}"
-            )
+            task_id = f"{execution.execution_id}:{step.name}"
 
             self.dispatcher.dispatch(
                 task_id=task_id,
@@ -69,5 +71,8 @@ class WorkflowCoordinator:
             result["step_name"],
             result=result["result"],
         )
+
+        if execution.status == WorkflowStatus.PAUSED:
+            return []
 
         return self.dispatch_ready_steps(execution)

@@ -7,6 +7,10 @@ class WorkflowListResponse(BaseModel):
     workflows: list[dict[str, Any]]
 
 
+class WorkflowExecutionRequest(BaseModel):
+    inputs: dict[str, Any] = {}
+
+
 class WorkflowExecutionResponse(BaseModel):
     execution_id: str
     workflow: str

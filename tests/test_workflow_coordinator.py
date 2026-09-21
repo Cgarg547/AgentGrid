@@ -530,3 +530,127 @@ def test_distributed_two_step_workflow():
     assert execution.step_results["analysis"] == {
         "analysis": "Analyzed 2 findings."
     }
+
+def test_coordinator_does_not_dispatch_next_step_when_execution_is_paused():
+    from app.services.task_dispatcher import TaskDispatcher
+    from app.workers.queue import TaskQueue
+    from app.workers.result_queue import TaskResultQueue
+    from app.workers.workflow_coordinator import WorkflowCoordinator
+    from app.workflows.examples import create_research_workflow
+    from app.workflows.execution import WorkflowExecution
+
+    queue = TaskQueue("test:workflow:pause:tasks")
+    result_queue = TaskResultQueue("test:workflow:pause:results")
+
+    while queue.size() > 0:
+        queue.dequeue()
+
+    while result_queue.size() > 0:
+        result_queue.consume()
+
+    coordinator = WorkflowCoordinator(
+        dispatcher=TaskDispatcher(queue),
+        result_queue=result_queue,
+    )
+
+    workflow = create_research_workflow()
+    execution = WorkflowExecution(workflow)
+
+    coordinator.dispatch_ready_steps(
+        execution,
+        inputs={"topic": "AI orchestration"},
+    )
+
+    # Consume the initially dispatched research task.
+    initial_task = queue.dequeue()
+
+    assert initial_task is not None
+    assert initial_task["step_name"] == "research"
+
+    research_result = {
+        "execution_id": execution.execution_id,
+        "step_name": "research",
+        "status": "completed",
+        "result": {"findings": ["distributed agents"]},
+    }
+
+    execution.pause()
+
+    dispatched = coordinator.process_result(
+        execution,
+        research_result,
+    )
+
+    assert dispatched == []
+    assert execution.status.value == "paused"
+    assert queue.size() == 0
+
+def test_coordinator_dispatches_ready_step_after_resume():
+    from app.services.task_dispatcher import TaskDispatcher
+    from app.workers.queue import TaskQueue
+    from app.workers.result_queue import TaskResultQueue
+    from app.workers.workflow_coordinator import WorkflowCoordinator
+    from app.workflows.examples import create_research_workflow
+    from app.workflows.execution import WorkflowExecution
+
+    queue = TaskQueue("test:workflow:resume:tasks")
+    result_queue = TaskResultQueue("test:workflow:resume:results")
+
+    while queue.size() > 0:
+        queue.dequeue()
+
+    while result_queue.size() > 0:
+        result_queue.consume()
+
+    coordinator = WorkflowCoordinator(
+        dispatcher=TaskDispatcher(queue),
+        result_queue=result_queue,
+    )
+
+    workflow = create_research_workflow()
+    execution = WorkflowExecution(workflow)
+
+    coordinator.dispatch_ready_steps(
+        execution,
+        inputs={"topic": "AI orchestration"},
+    )
+
+    initial_task = queue.dequeue()
+
+    assert initial_task is not None
+    assert initial_task["step_name"] == "research"
+
+    research_result = {
+        "execution_id": execution.execution_id,
+        "step_name": "research",
+        "status": "completed",
+        "result": {"findings": ["distributed agents"]},
+    }
+
+    execution.mark_step_completed(
+        "research",
+        result=research_result["result"],
+    )
+
+    execution.pause()
+
+    assert execution.status.value == "paused"
+
+    execution.resume()
+
+    assert execution.status.value == "running"
+
+    dispatched = coordinator.dispatch_ready_steps(
+        execution
+    )
+
+    assert dispatched == ["analysis"]
+    assert queue.size() == 1
+
+    next_task = queue.dequeue()
+
+    assert next_task is not None
+    assert next_task["step_name"] == "analysis"
+    assert next_task["inputs"] == {
+        "research": {"findings": ["distributed agents"]}
+    }

@@ -1,8 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import threading
 import time
+from uuid import uuid4
 from typing import Any, Callable
 from app.workers.result_queue import TaskResultQueue
+from app.workers.heartbeat import WorkerHeartbeatRegistry
 from app.workers.dead_letter import DeadLetterQueue
 from app.workers.events import WorkerEvent
 from app.workers.idempotency import IdempotencyStore
@@ -23,9 +25,18 @@ class Worker:
         dead_letter_queue: DeadLetterQueue | None = None,
         event_repository: Any | None = None,
         result_queue: TaskResultQueue | None = None,
+        heartbeat_registry: WorkerHeartbeatRegistry | None = None,
     ):
         self.queue = queue
         self.agent_handlers = agent_handlers
+        self.owner_id = f"worker-{uuid4()}"
+        self.heartbeat_registry = (
+            heartbeat_registry or WorkerHeartbeatRegistry()
+        )
+
+        self.heartbeat_registry.register(
+            worker_id=self.owner_id,
+        )
         self.retry_policy = retry_policy or RetryPolicy()
         self.timeout_policy = timeout_policy or TimeoutPolicy()
         self.idempotency_store = (
@@ -73,7 +84,10 @@ class Worker:
                 "error": "Task is already being processed.",
             }
 
-        if not self.idempotency_store.claim(task_id):
+        if not self.idempotency_store.claim(
+            task_id,
+            owner_id=self.owner_id,
+        ):
             return {
                 "task_id": task_id,
                 "step_name": step_name,
@@ -307,7 +321,25 @@ class Worker:
         )
 
         while not stop_event.wait(interval):
-            renewed = self.idempotency_store.renew_claim(task_id)
+            lease_renewed = (
+                self.idempotency_store.renew_claim(
+                    task_id,
+                    owner_id=self.owner_id,
+                )
+            )
 
-            if not renewed:
+            worker_heartbeat_sent = (
+                self.heartbeat_registry.heartbeat(
+                    self.owner_id,
+                    metadata={
+                        "task_id": task_id,
+                        "state": "running",
+                    },
+                )
+            )
+
+            if not lease_renewed:
+                return
+
+            if not worker_heartbeat_sent:
                 return

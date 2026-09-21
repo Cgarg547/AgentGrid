@@ -1,5 +1,9 @@
+from app.core.database import SessionLocal
 from app.services.distributed_workflow_executor import (
     DistributedWorkflowExecutor,
+)
+from app.services.postgres_execution_repository import (
+    PostgresExecutionRepository,
 )
 from app.services.task_dispatcher import TaskDispatcher
 from app.workers.queue import TaskQueue
@@ -29,9 +33,14 @@ def test_distributed_executor_starts_workflow():
         "agentgrid-test-distributed-executor-result"
     )
 
+    execution_repository = PostgresExecutionRepository(
+        SessionLocal
+    )
+
     executor = DistributedWorkflowExecutor(
         dispatcher=TaskDispatcher(task_queue),
         result_queue=result_queue,
+        execution_repository=execution_repository,
     )
 
     execution = executor.start(
@@ -53,6 +62,16 @@ def test_distributed_executor_starts_workflow():
     assert task["inputs"] == {
         "topic": "AI orchestration",
     }
+
+    persisted_execution = execution_repository.get(
+        execution.execution_id
+    )
+
+    assert persisted_execution is not None
+    assert persisted_execution.execution_id == execution.execution_id
+    assert persisted_execution.workflow_name == "test-workflow"
+    assert persisted_execution.status == execution.status.value
+    assert persisted_execution.step_statuses["research"] == "running"
 
 
 def test_distributed_executor_processes_result_and_dispatches_next_step():
@@ -80,9 +99,14 @@ def test_distributed_executor_processes_result_and_dispatches_next_step():
         "agentgrid-test-distributed-executor-result-result-v3"
     )
 
+    execution_repository = PostgresExecutionRepository(
+        SessionLocal
+    )
+
     executor = DistributedWorkflowExecutor(
         dispatcher=TaskDispatcher(task_queue),
         result_queue=result_queue,
+        execution_repository=execution_repository,
     )
 
     execution = executor.start(workflow)
@@ -130,3 +154,14 @@ def test_distributed_executor_processes_result_and_dispatches_next_step():
     assert analysis_task["inputs"] == {
         "research": research_result,
     }
+
+    persisted_execution = execution_repository.get(
+        execution.execution_id
+    )
+
+    assert persisted_execution is not None
+    assert persisted_execution.execution_id == execution.execution_id
+    assert persisted_execution.workflow_name == "test-workflow"
+    assert persisted_execution.step_statuses["research"] == "completed"
+    assert persisted_execution.step_statuses["analysis"] == "running"
+    assert persisted_execution.step_results["research"] == research_result

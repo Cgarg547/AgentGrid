@@ -7,6 +7,7 @@ from app.models.execution import (
 )
 from app.models.workflow_api import (
     WorkflowExecutionDetailResponse,
+    WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowListResponse,
 )
@@ -59,12 +60,107 @@ def execute_workflow(workflow_name: str):
     }
 
 
+@router.post(
+    "/{workflow_name}/execute/distributed",
+    response_model=WorkflowExecutionResponse,
+)
+def execute_workflow_distributed(
+    workflow_name: str,
+    request: WorkflowExecutionRequest,
+):
+    try:
+        execution = runtime.execute_workflow_distributed(
+            workflow_name=workflow_name,
+            inputs=request.inputs,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow '{workflow_name}' not found.",
+        )
+
+    return {
+        "execution_id": execution.execution_id,
+        "workflow": workflow_name,
+        "status": execution.status.value,
+        "step_results": execution.step_results,
+    }
+
+
 @router.get(
     "/executions/{execution_id}",
     response_model=WorkflowExecutionDetailResponse,
 )
 def get_execution(execution_id: str):
-    execution = runtime.get_execution(execution_id)
+    execution = runtime.get_execution(
+        execution_id
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution '{execution_id}' not found.",
+        )
+
+    return {
+        "execution_id": execution.execution_id,
+        "workflow": execution.workflow.name,
+        "status": execution.status.value,
+        "step_statuses": {
+            name: status.value
+            for name, status in execution.step_statuses.items()
+        },
+        "step_results": execution.step_results,
+    }
+
+
+@router.post(
+    "/executions/{execution_id}/pause",
+    response_model=WorkflowExecutionDetailResponse,
+)
+def pause_execution(execution_id: str):
+    try:
+        execution = runtime.pause_execution(
+            execution_id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution '{execution_id}' not found.",
+        )
+
+    return {
+        "execution_id": execution.execution_id,
+        "workflow": execution.workflow.name,
+        "status": execution.status.value,
+        "step_statuses": {
+            name: status.value
+            for name, status in execution.step_statuses.items()
+        },
+        "step_results": execution.step_results,
+    }
+
+
+@router.post(
+    "/executions/{execution_id}/resume",
+    response_model=WorkflowExecutionDetailResponse,
+)
+def resume_execution(execution_id: str):
+    try:
+        execution = runtime.resume_execution(
+            execution_id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
 
     if execution is None:
         raise HTTPException(

@@ -1,3 +1,4 @@
+import pytest
 from app.workflows.execution import WorkflowExecution
 from app.workflows.examples import create_research_workflow
 from app.workflows.runner import WorkflowRunner
@@ -40,3 +41,40 @@ def test_research_workflow_completes():
     assert result.step_results["report"]["report"] == (
         "Analyzed 2 findings."
     )
+
+
+def test_workflow_execution_can_be_paused_and_resumed():
+    from app.workflows.execution import WorkflowExecution
+    from app.workflows.examples import create_research_workflow
+    from app.workflows.workflow_state import WorkflowStatus
+
+    workflow = create_research_workflow()
+
+    execution = WorkflowExecution(workflow)
+
+    execution.mark_step_running("research")
+
+    assert execution.status == WorkflowStatus.RUNNING
+
+    execution.pause()
+
+    assert execution.status == WorkflowStatus.PAUSED
+
+    execution.resume()
+
+    assert execution.status == WorkflowStatus.RUNNING
+
+
+def test_workflow_execution_rejects_invalid_pause_and_resume():
+    from app.workflows.execution import WorkflowExecution
+    from app.workflows.examples import create_research_workflow
+
+    workflow = create_research_workflow()
+
+    execution = WorkflowExecution(workflow)
+
+    with pytest.raises(ValueError):
+        execution.pause()
+
+    with pytest.raises(ValueError):
+        execution.resume()

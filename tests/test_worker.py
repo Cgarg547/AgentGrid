@@ -409,3 +409,88 @@ def test_worker_sends_timeout_to_dead_letter_queue():
 
     assert dead_lettered_task == result
     assert dead_letter_queue.size() == 0
+
+def test_worker_uses_unique_lease_owner():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-owner-{uuid4()}"
+    )
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": lambda **kwargs: {
+                "value": "success"
+            },
+        },
+    )
+
+    assert worker.owner_id
+    assert isinstance(worker.owner_id, str)
+
+    second_worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": lambda **kwargs: {
+                "value": "success"
+            },
+        },
+    )
+
+    assert second_worker.owner_id
+    assert worker.owner_id != second_worker.owner_id
+
+def test_worker_can_reclaim_task_after_previous_lease_expires():
+    queue = TaskQueue(
+        f"test-agentgrid-worker-reclaim-{uuid4()}"
+    )
+
+    store = IdempotencyStore(
+        key_prefix=f"test-agentgrid-idempotency-{uuid4()}",
+        claim_ttl_seconds=1,
+    )
+
+    task_id = f"task-reclaim-{uuid4()}"
+
+    first_worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": lambda **kwargs: {
+                "worker": "first"
+            },
+        },
+        idempotency_store=store,
+    )
+
+    second_worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "research-agent": lambda **kwargs: {
+                "worker": "second"
+            },
+        },
+        idempotency_store=store,
+    )
+
+    assert store.claim(
+        task_id,
+        owner_id=first_worker.owner_id,
+    ) is True
+
+    time.sleep(1.1)
+
+    queue.enqueue(
+        {
+            "task_id": task_id,
+            "agent_name": "research-agent",
+            "step_name": "research",
+            "inputs": {},
+        }
+    )
+
+    result = second_worker.process_one()
+
+    assert result is not None
+    assert result["status"] == TaskStatus.COMPLETED.value
+    assert result["result"] == {
+        "worker": "second"
+    }

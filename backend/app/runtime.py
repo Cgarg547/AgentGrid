@@ -11,6 +11,9 @@ from app.services.postgres_execution_repository import (
 from app.services.postgres_workflow_repository import (
     PostgresWorkflowRepository,
 )
+from app.services.execution_recovery_service import (
+    ExecutionRecoveryService,
+)
 from app.services.execution_checkpoint_repository import (
     ExecutionCheckpointRepository,
 )
@@ -54,11 +57,12 @@ class AgentGridRuntime:
         self.distributed_workflow_executor = (
             DistributedWorkflowExecutor(
                 dispatcher=TaskDispatcher(
-                self.distributed_task_queue
-            ),
-            result_queue=self.distributed_result_queue,
+                    self.distributed_task_queue
+                ),
+                result_queue=self.distributed_result_queue,
+                execution_repository=self.execution_repository,
+            )
         )
-    )
 
         self.agent_handlers: dict[str, Any] = {
             "research-agent": self._research_agent,
@@ -215,6 +219,72 @@ class AgentGridRuntime:
         }
 
         execution.step_results = record.step_results
+
+        return execution
+
+    def recover_distributed_execution(
+        self,
+        execution_id: str,
+    ):
+        record = self.execution_repository.get(
+            execution_id
+        )
+
+        if record is None:
+            return None
+
+        workflow = self.workflow_registry.get(
+            record.workflow_name
+        )
+
+        recovery_service = ExecutionRecoveryService(
+            execution_repository=self.execution_repository,
+        )
+
+        return recovery_service.recover_distributed_execution(
+            workflow=workflow,
+            execution_id=execution_id,
+        )
+
+    def pause_execution(
+        self,
+        execution_id: str,
+    ):
+        execution = self.get_execution(
+            execution_id
+        )
+
+        if execution is None:
+            return None
+
+        execution.pause()
+
+        self.execution_repository.save(
+            execution
+        )
+
+        return execution
+
+    def resume_execution(
+        self,
+        execution_id: str,
+    ):
+        execution = self.get_execution(
+            execution_id
+        )
+
+        if execution is None:
+            return None
+
+        execution.resume()
+
+        self.distributed_workflow_executor.coordinator.dispatch_ready_steps(
+            execution
+        )
+
+        self.execution_repository.save(
+            execution
+        )
 
         return execution
 

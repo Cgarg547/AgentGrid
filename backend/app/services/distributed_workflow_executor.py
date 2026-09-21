@@ -1,5 +1,8 @@
 from typing import Any
 
+from app.services.postgres_execution_repository import (
+    PostgresExecutionRepository,
+)
 from app.services.task_dispatcher import TaskDispatcher
 from app.workers.result_queue import TaskResultQueue
 from app.workers.workflow_coordinator import WorkflowCoordinator
@@ -12,11 +15,14 @@ class DistributedWorkflowExecutor:
         self,
         dispatcher: TaskDispatcher,
         result_queue: TaskResultQueue,
+        execution_repository: PostgresExecutionRepository | None = None,
     ):
         self.coordinator = WorkflowCoordinator(
             dispatcher=dispatcher,
             result_queue=result_queue,
         )
+
+        self.execution_repository = execution_repository
 
     def start(
         self,
@@ -32,6 +38,9 @@ class DistributedWorkflowExecutor:
             inputs=inputs,
         )
 
+        if self.execution_repository is not None:
+            self.execution_repository.save(execution)
+
         return execution
 
     def process_result(
@@ -43,5 +52,8 @@ class DistributedWorkflowExecutor:
             execution,
             result,
         )
+
+        if self.execution_repository is not None:
+            self.execution_repository.save(execution)
 
         return execution

@@ -47,39 +47,126 @@ class IdempotencyStore:
             }),
         )
 
-    def claim(self, task_id: str) -> bool:
+    def claim(
+        self,
+        task_id: str,
+        owner_id: str | None = None,
+    ) -> bool:
+        record = {
+            "status": self.CLAIMED_STATUS,
+        }
+
+        if owner_id is not None:
+            record["owner_id"] = owner_id
+
         return bool(
             redis_client.set(
                 self._build_key(task_id),
-                json.dumps({
-                    "status": self.CLAIMED_STATUS,
-                }),
+                json.dumps(record),
                 nx=True,
                 ex=self.claim_ttl_seconds,
             )
         )
 
-    def renew_claim(self, task_id: str) -> bool:
+    def renew_claim(
+        self,
+        task_id: str,
+        owner_id: str | None = None,
+    ) -> bool:
         key = self._build_key(task_id)
 
-        value = redis_client.get(key)
+        if owner_id is None:
+            value = redis_client.get(key)
 
-        if value is None:
-            return False
+            if value is None:
+                return False
 
-        record = json.loads(value)
+            record = json.loads(value)
 
-        if record.get("status") != self.CLAIMED_STATUS:
-            return False
+            if record.get("status") != self.CLAIMED_STATUS:
+                return False
 
-        return bool(
-            redis_client.expire(
-                key,
-                self.claim_ttl_seconds,
+            return bool(
+                redis_client.expire(
+                    key,
+                    self.claim_ttl_seconds,
+                )
             )
+
+        script = """
+        local value = redis.call('GET', KEYS[1])
+
+        if not value then
+            return 0
+        end
+
+        local record = cjson.decode(value)
+
+        if record['status'] ~= ARGV[1] then
+            return 0
+        end
+
+        if record['owner_id'] ~= ARGV[2] then
+            return 0
+        end
+
+        redis.call('EXPIRE', KEYS[1], ARGV[3])
+
+        return 1
+        """
+
+        result = redis_client.eval(
+            script,
+            1,
+            key,
+            self.CLAIMED_STATUS,
+            owner_id,
+            self.claim_ttl_seconds,
         )
 
-    def delete(self, task_id: str) -> None:
-        redis_client.delete(
-            self._build_key(task_id)
+        return bool(result)
+
+
+    def delete(
+        self,
+        task_id: str,
+        owner_id: str | None = None,
+    ) -> bool:
+        key = self._build_key(task_id)
+
+        if owner_id is None:
+            return bool(
+                redis_client.delete(key)
+            )
+
+        script = """
+        local value = redis.call('GET', KEYS[1])
+
+        if not value then
+            return 0
+        end
+
+        local record = cjson.decode(value)
+
+        if record['status'] ~= ARGV[1] then
+            return 0
+        end
+
+        if record['owner_id'] ~= ARGV[2] then
+            return 0
+        end
+
+        redis.call('DEL', KEYS[1])
+
+        return 1
+        """
+
+        result = redis_client.eval(
+            script,
+            1,
+            key,
+            self.CLAIMED_STATUS,
+            owner_id,
         )
+
+        return bool(result)

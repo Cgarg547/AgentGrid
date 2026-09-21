@@ -69,6 +69,22 @@ class WorkflowExecution:
         self.step_statuses[step_name] = StepStatus.FAILED
         self.status = WorkflowStatus.FAILED
 
+    def pause(self) -> None:
+        if self.status != WorkflowStatus.RUNNING:
+            raise ValueError(
+                "Only a running workflow can be paused."
+            )
+
+        self.status = WorkflowStatus.PAUSED
+
+    def resume(self) -> None:
+        if self.status != WorkflowStatus.PAUSED:
+            raise ValueError(
+                "Only a paused workflow can be resumed."
+            )
+
+        self.status = WorkflowStatus.RUNNING
+
     def get_completed_steps(self) -> set[str]:
         return {
             name
