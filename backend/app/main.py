@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from app.api.approvals import router as approval_router
 from app.api.workflows import router as workflow_router
 from app.api.workers import router as worker_router
+from app.api.metrics import router as metrics_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 
@@ -22,6 +23,7 @@ app = FastAPI(
 app.include_router(workflow_router)
 app.include_router(approval_router)
 app.include_router(worker_router)
+app.include_router(metrics_router)
 
 
 @app.get("/")
