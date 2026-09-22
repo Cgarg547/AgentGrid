@@ -5,12 +5,18 @@ from app.core.database import SessionLocal
 from app.main import app
 from app.services.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
-
+from app.services.security_audit_repository import (
+    SecurityAuditRepository,
+)
 
 client = TestClient(app)
 
 repository = APIKeyRepository(SessionLocal)
 service = APIKeyService(repository)
+
+audit_repository = SecurityAuditRepository(
+    SessionLocal
+)
 
 
 def test_distributed_workflow_requires_api_key():
@@ -74,5 +80,34 @@ def test_distributed_workflow_accepts_valid_api_key(monkeypatch):
             "status": "running",
             "step_results": {},
         }
+
+        events = audit_repository.list(
+            key_id=api_key.key_id,
+            action="workflow.execute.distributed",
+        )
+
+        assert events
+
+        event = events[-1]
+
+        assert event.resource == "research-pipeline"
+
+        assert event.endpoint == (
+            "POST "
+            "/workflows/{workflow_name}/execute/distributed"
+        )
+
+        assert event.outcome == "allowed"
+
+        metadata = (
+            SecurityAuditRepository.deserialize_metadata(
+                event.metadata_json
+            )
+        )
+
+        assert metadata["execution_id"] == (
+            "auth-test-execution"
+        )
+
     finally:
         service.delete_api_key(api_key.key_id)

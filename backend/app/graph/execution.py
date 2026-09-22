@@ -434,6 +434,7 @@ class LangGraphExecutionAdapter:
         event = WorkerEvent.create(
             event_type=event_type,
             task_id=execution_id,
+            execution_id=execution_id,
             data=data,
         )
 

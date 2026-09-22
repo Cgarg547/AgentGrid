@@ -8,10 +8,11 @@ from app.api.metrics import (
     get_execution_metrics,
     router,
 )
+from app.core.database import SessionLocal
 from app.models.execution_event import ExecutionEvent
-from app.services.execution_event_repository import ExecutionEventRepository
+from app.services.api_key_repository import APIKeyRepository
+from app.services.api_key_service import APIKeyService
 from app.services.execution_metrics import ExecutionMetrics
-from app.workers.events import WorkerEvent
 
 
 class FakeExecutionEventRepository:
@@ -69,183 +70,225 @@ def create_client(events):
     return TestClient(app)
 
 
+def create_test_key():
+    service = APIKeyService(
+        APIKeyRepository(SessionLocal)
+    )
+
+    return service.create_api_key(
+        "execution-metrics-test",
+        scopes=["executions:read"],
+    )
+
+
+def auth_headers(raw_key):
+    return {
+        "Authorization": f"Bearer {raw_key}"
+    }
+
+
+def delete_test_key(key_id):
+    service = APIKeyService(
+        APIKeyRepository(SessionLocal)
+    )
+    service.delete_api_key(key_id)
+
+
 def test_execution_metrics_api_returns_execution_metrics():
     execution_id = "api-execution-1"
 
-    client = create_client([
-        make_event(
-            execution_id,
-            "workflow.started",
-            {
-                "workflow_name": "research-pipeline",
-            },
-        ),
-        make_event(
-            execution_id,
-            "step.completed",
-            {
-                "step_name": "research",
-                "duration_ms": 100.0,
-            },
-        ),
-        make_event(
-            execution_id,
-            "workflow.completed",
-            {
-                "duration_ms": 250.0,
-            },
-        ),
-    ])
+    test_key, raw_key = create_test_key()
 
-    response = client.get(
-        f"/metrics/executions/{execution_id}"
-    )
+    try:
+        client = create_client([
+            make_event(
+                execution_id,
+                "workflow.started",
+                {
+                    "workflow_name": "research-pipeline",
+                },
+            ),
+            make_event(
+                execution_id,
+                "step.completed",
+                {
+                    "step_name": "research",
+                    "duration_ms": 100.0,
+                },
+            ),
+            make_event(
+                execution_id,
+                "workflow.completed",
+                {
+                    "duration_ms": 250.0,
+                },
+            ),
+        ])
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "execution_id": execution_id,
-        "status": "completed",
-        "duration_ms": 250.0,
-        "step_count": 1,
-    }
+        response = client.get(
+            f"/metrics/executions/{execution_id}",
+            headers=auth_headers(raw_key),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "execution_id": execution_id,
+            "status": "completed",
+            "duration_ms": 250.0,
+            "step_count": 1,
+        }
+    finally:
+        delete_test_key(test_key.key_id)
 
 
 def test_execution_metrics_api_returns_step_metrics():
     execution_id = "api-execution-steps"
 
-    client = create_client([
-        make_event(
-            execution_id,
-            "step.completed",
-            {
-                "step_name": "research",
-                "duration_ms": 100.0,
-            },
-        ),
-        make_event(
-            execution_id,
-            "step.failed",
-            {
-                "step_name": "analysis",
-                "duration_ms": 50.0,
-            },
-        ),
-    ])
+    test_key, raw_key = create_test_key()
 
-    response = client.get(
-        f"/metrics/executions/{execution_id}/steps"
-    )
+    try:
+        client = create_client([
+            make_event(
+                execution_id,
+                "step.completed",
+                {
+                    "step_name": "research",
+                    "duration_ms": 100.0,
+                },
+            ),
+            make_event(
+                execution_id,
+                "step.failed",
+                {
+                    "step_name": "analysis",
+                    "duration_ms": 50.0,
+                },
+            ),
+        ])
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "execution_id": execution_id,
-        "steps": [
-            {
-                "step_name": "research",
-                "event_type": "step.completed",
-                "duration_ms": 100.0,
-            },
-            {
-                "step_name": "analysis",
-                "event_type": "step.failed",
-                "duration_ms": 50.0,
-            },
-        ],
-    }
+        response = client.get(
+            f"/metrics/executions/{execution_id}/steps",
+            headers=auth_headers(raw_key),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "execution_id": execution_id,
+            "steps": [
+                {
+                    "step_name": "research",
+                    "event_type": "step.completed",
+                    "duration_ms": 100.0,
+                },
+                {
+                    "step_name": "analysis",
+                    "event_type": "step.failed",
+                    "duration_ms": 50.0,
+                },
+            ],
+        }
+    finally:
+        delete_test_key(test_key.key_id)
 
 
 def test_execution_metrics_api_returns_summary():
-    client = create_client([
-        make_event(
-            "api-summary-1",
-            "workflow.started",
-            {
-                "workflow_name": "research-pipeline",
-            },
-        ),
-        make_event(
-            "api-summary-1",
-            "workflow.completed",
-            {
-                "duration_ms": 100.0,
-            },
-        ),
-        make_event(
-            "api-summary-1",
-            "step.completed",
-            {
-                "step_name": "research",
-                "duration_ms": 50.0,
-            },
-        ),
-        make_event(
-            "api-summary-2",
-            "workflow.started",
-            {
-                "workflow_name": "research-pipeline",
-            },
-        ),
-        make_event(
-            "api-summary-2",
-            "workflow.completed",
-            {
-                "duration_ms": 200.0,
-            },
-        ),
-        make_event(
-            "api-summary-2",
-            "step.completed",
-            {
-                "step_name": "research",
-                "duration_ms": 100.0,
-            },
-        ),
-        make_event(
-            "api-summary-2",
-            "step.completed",
-            {
-                "step_name": "analysis",
-                "duration_ms": 100.0,
-            },
-        ),
-        make_event(
-            "api-summary-3",
-            "workflow.started",
-            {
-                "workflow_name": "research-pipeline",
-            },
-        ),
-        make_event(
-            "api-summary-3",
-            "workflow.failed",
-            {
-                "duration_ms": 150.0,
-            },
-        ),
-        make_event(
-            "api-summary-3",
-            "step.failed",
-            {
-                "step_name": "analysis",
-                "duration_ms": 75.0,
-            },
-        ),
-    ])
+    test_key, raw_key = create_test_key()
 
-    response = client.get(
-        "/metrics/executions/summary"
-    )
+    try:
+        client = create_client([
+            make_event(
+                "api-summary-1",
+                "workflow.started",
+                {
+                    "workflow_name": "research-pipeline",
+                },
+            ),
+            make_event(
+                "api-summary-1",
+                "workflow.completed",
+                {
+                    "duration_ms": 100.0,
+                },
+            ),
+            make_event(
+                "api-summary-1",
+                "step.completed",
+                {
+                    "step_name": "research",
+                    "duration_ms": 50.0,
+                },
+            ),
+            make_event(
+                "api-summary-2",
+                "workflow.started",
+                {
+                    "workflow_name": "research-pipeline",
+                },
+            ),
+            make_event(
+                "api-summary-2",
+                "workflow.completed",
+                {
+                    "duration_ms": 200.0,
+                },
+            ),
+            make_event(
+                "api-summary-2",
+                "step.completed",
+                {
+                    "step_name": "research",
+                    "duration_ms": 100.0,
+                },
+            ),
+            make_event(
+                "api-summary-2",
+                "step.completed",
+                {
+                    "step_name": "analysis",
+                    "duration_ms": 100.0,
+                },
+            ),
+            make_event(
+                "api-summary-3",
+                "workflow.started",
+                {
+                    "workflow_name": "research-pipeline",
+                },
+            ),
+            make_event(
+                "api-summary-3",
+                "workflow.failed",
+                {
+                    "duration_ms": 150.0,
+                },
+            ),
+            make_event(
+                "api-summary-3",
+                "step.failed",
+                {
+                    "step_name": "analysis",
+                    "duration_ms": 75.0,
+                },
+            ),
+        ])
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "total_executions": 3,
-        "completed": 2,
-        "failed": 1,
-        "unknown": 0,
-        "success_rate": 2 / 3,
-        "average_duration_ms": 150.0,
-        "average_step_count": 4 / 3,
-    }
+        response = client.get(
+            "/metrics/executions/summary",
+            headers=auth_headers(raw_key),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_executions": 3,
+            "completed": 2,
+            "failed": 1,
+            "unknown": 0,
+            "success_rate": 2 / 3,
+            "average_duration_ms": 150.0,
+            "average_step_count": 4 / 3,
+        }
+    finally:
+        delete_test_key(test_key.key_id)
 
 
 def test_aggregate_metrics_filters_by_workflow_name():
@@ -348,6 +391,7 @@ def test_aggregate_metrics_ignores_non_workflow_task_ids():
     assert result["unknown"] == 0
     assert result["success_rate"] == 1.0
     assert result["average_duration_ms"] == 100.0
+
 
 def test_aggregate_metrics_filters_by_time_window():
     start_time = datetime(

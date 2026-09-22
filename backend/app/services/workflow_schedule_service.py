@@ -63,25 +63,31 @@ class WorkflowScheduleService:
 
         return self.repository.list_due(now)
 
-    def enable_schedule(self, schedule_id: str) -> bool:
+    def enable_schedule(
+        self,
+        schedule_id: str,
+    ) -> WorkflowSchedule | None:
         schedule = self.repository.get(schedule_id)
 
         if schedule is None:
-            return False
+            return None
 
         schedule.enabled = True
         self.repository.save(schedule)
-        return True
+        return self.repository.get(schedule_id)
 
-    def disable_schedule(self, schedule_id: str) -> bool:
+    def disable_schedule(
+        self,
+        schedule_id: str,
+    ) -> WorkflowSchedule | None:
         schedule = self.repository.get(schedule_id)
 
         if schedule is None:
-            return False
+            return None
 
         schedule.enabled = False
         self.repository.save(schedule)
-        return True
+        return self.repository.get(schedule_id)
 
     def delete_schedule(self, schedule_id: str) -> bool:
         return self.repository.delete(schedule_id)

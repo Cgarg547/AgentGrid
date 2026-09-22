@@ -21,6 +21,12 @@ class ExecutionEvent(Base):
         index=True,
     )
 
+    execution_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+
     event_type: Mapped[str] = mapped_column(
         String(100),
         nullable=False,

@@ -54,6 +54,7 @@ def test_get_execution_events_from_real_worker():
     session = TestSessionLocal()
 
     task_id = f"api-event-{uuid.uuid4()}"
+    execution_id = str(uuid.uuid4())
 
     queue = TaskQueue(
         f"test-api-events-{uuid.uuid4()}"
@@ -80,6 +81,7 @@ def test_get_execution_events_from_real_worker():
         queue.enqueue(
             {
                 "task_id": task_id,
+                "execution_id": execution_id,
                 "step_name": "research",
                 "agent_name": "researcher",
                 "inputs": {},
@@ -92,7 +94,7 @@ def test_get_execution_events_from_real_worker():
         assert result["status"] == "completed"
 
         response = client.get(
-            f"/workflows/executions/{task_id}/events",
+            f"/workflows/executions/{execution_id}/events",
             headers={
                 "Authorization": f"Bearer {raw_key}"
             },
@@ -102,7 +104,7 @@ def test_get_execution_events_from_real_worker():
 
         payload = response.json()
 
-        assert payload["task_id"] == task_id
+        assert payload["task_id"] == execution_id
 
         event_types = [
             event["event_type"]
@@ -447,3 +449,112 @@ def test_execution_events_include_timing_metadata():
         api_key_service.delete_api_key(
             api_key.key_id
         )
+
+def test_get_execution_trace_from_real_worker():
+    api_key, raw_key = create_test_api_key()
+
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+    )
+
+    TestSessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    session = TestSessionLocal()
+
+    task_id = f"trace-api-{uuid.uuid4()}"
+    execution_id = str(uuid.uuid4())
+
+    queue = TaskQueue(
+        f"test-trace-api-{uuid.uuid4()}"
+    )
+
+    worker = Worker(
+        queue=queue,
+        agent_handlers={
+            "researcher": lambda **kwargs: {
+                "message": "completed"
+            }
+        },
+        idempotency_store=IdempotencyStore(
+            key_prefix=f"test-trace-api:{uuid.uuid4()}"
+        ),
+        event_repository=ExecutionEventRepository(
+            session
+        ),
+    )
+
+    try:
+        Base.metadata.create_all(bind=engine)
+
+        queue.enqueue(
+            {
+                "task_id": task_id,
+                "execution_id": execution_id,
+                "step_name": "research",
+                "agent_name": "researcher",
+                "inputs": {},
+            }
+        )
+
+        result = worker.process_one()
+
+        assert result is not None
+        assert result["status"] == "completed"
+
+        response = client.get(
+            f"/workflows/executions/{execution_id}/trace",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
+        )
+
+        assert response.status_code == 200
+
+        payload = response.json()
+
+        assert payload["execution_id"] == execution_id
+        assert len(payload["tasks"]) == 1
+
+        trace_task = payload["tasks"][0]
+
+        assert trace_task["task_id"] == task_id
+
+        assert [
+            event["event_type"]
+            for event in trace_task["events"]
+        ] == [
+            "task_received",
+            "task_claimed",
+            "task_started",
+            "task_completed",
+        ]
+
+    finally:
+        session.close()
+
+
+def test_get_execution_trace_returns_empty_for_unknown_execution():
+    api_key, raw_key = create_test_api_key()
+
+    execution_id = str(uuid.uuid4())
+
+    response = client.get(
+        f"/workflows/executions/{execution_id}/trace",
+        headers={
+            "Authorization": f"Bearer {raw_key}"
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload == {
+        "execution_id": execution_id,
+        "tasks": [],
+    }

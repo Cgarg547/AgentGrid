@@ -9,7 +9,7 @@ from app.models.api_key_api import (
     APIKeyResponse,
     APIKeyScopeUpdateRequest,
 )
-from app.security.scope_auth import require_scope
+from app.security.protected_api import require_scope_with_rate_limit
 from app.security.scopes import APIScope
 from app.services.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
@@ -43,7 +43,7 @@ def _to_response(api_key: APIKey) -> APIKeyResponse:
 def create_api_key(
     request: APIKeyCreateRequest,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -69,7 +69,7 @@ def create_api_key(
 )
 def list_api_keys(
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -92,7 +92,7 @@ def list_api_keys(
 def get_api_key(
     key_id: str,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -116,7 +116,7 @@ def update_api_key_scopes(
     key_id: str,
     request: APIKeyScopeUpdateRequest,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -142,7 +142,7 @@ def update_api_key_scopes(
 def enable_api_key(
     key_id: str,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -165,7 +165,7 @@ def enable_api_key(
 def disable_api_key(
     key_id: str,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),
@@ -187,7 +187,7 @@ def disable_api_key(
 def delete_api_key(
     key_id: str,
     _current_api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.API_KEYS_MANAGE
         )
     ),

@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.security.protected_api import require_scope_with_rate_limit
+from app.security.scopes import APIScope
 from app.services.execution_event_repository import (
     ExecutionEventRepository,
 )
@@ -35,6 +37,11 @@ def get_execution_metrics(
 @router.get("/queues")
 def get_queue_metrics(
     metrics: WorkerMetrics = Depends(get_worker_metrics),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKERS_READ
+        )
+    ),
 ):
     return metrics.queue_metrics()
 
@@ -42,8 +49,14 @@ def get_queue_metrics(
 @router.get("/workers")
 def get_worker_metrics_status(
     metrics: WorkerMetrics = Depends(get_worker_metrics),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKERS_READ
+        )
+    ),
 ):
     return metrics.worker_metrics()
+
 
 @router.get("/executions/summary")
 def get_execution_metrics_summary(
@@ -52,6 +65,11 @@ def get_execution_metrics_summary(
     end_time: datetime | None = None,
     metrics: ExecutionMetrics = Depends(
         get_execution_metrics
+    ),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_READ
+        )
     ),
 ):
     try:
@@ -66,11 +84,17 @@ def get_execution_metrics_summary(
             detail=str(exc),
         ) from exc
 
+
 @router.get("/executions/{execution_id}")
 def get_execution_metrics_status(
     execution_id: str,
     metrics: ExecutionMetrics = Depends(
         get_execution_metrics
+    ),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_READ
+        )
     ),
 ):
     return metrics.execution_metrics(
@@ -83,6 +107,11 @@ def get_execution_step_metrics(
     execution_id: str,
     metrics: ExecutionMetrics = Depends(
         get_execution_metrics
+    ),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_READ
+        )
     ),
 ):
     return {
@@ -97,6 +126,11 @@ def get_execution_step_metrics(
 def get_metrics(
     metrics: WorkerMetrics = Depends(
         get_worker_metrics
+    ),
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKERS_READ
+        )
     ),
 ):
     return metrics.snapshot()

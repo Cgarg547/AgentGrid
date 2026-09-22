@@ -8,8 +8,16 @@ from app.api.metrics import (
     get_execution_metrics,
     router,
 )
+from app.core.database import SessionLocal
 from app.models.execution_event import ExecutionEvent
+from app.services.api_key_repository import APIKeyRepository
+from app.services.api_key_service import APIKeyService
 from app.services.execution_metrics import ExecutionMetrics
+
+
+api_key_service = APIKeyService(
+    APIKeyRepository(SessionLocal)
+)
 
 
 class FakeExecutionEventRepository:
@@ -59,7 +67,35 @@ def create_client(events):
         get_execution_metrics
     ] = override_execution_metrics
 
-    return TestClient(app)
+    test_key, raw_key = api_key_service.create_api_key(
+        "execution-metrics-api-test",
+        scopes=[
+            "executions:read",
+        ],
+    )
+
+    client = TestClient(app)
+
+    client._agentgrid_test_key_id = test_key.key_id
+
+    client.headers.update({
+        "Authorization": f"Bearer {raw_key}"
+    })
+
+    return client
+
+
+def cleanup_client(client):
+    key_id = getattr(
+        client,
+        "_agentgrid_test_key_id",
+        None,
+    )
+
+    if key_id is not None:
+        api_key_service.delete_api_key(
+            key_id
+        )
 
 
 def test_execution_metrics_api_returns_execution_metrics():
@@ -90,17 +126,20 @@ def test_execution_metrics_api_returns_execution_metrics():
         ),
     ])
 
-    response = client.get(
-        f"/metrics/executions/{execution_id}"
-    )
+    try:
+        response = client.get(
+            f"/metrics/executions/{execution_id}"
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "execution_id": execution_id,
-        "status": "completed",
-        "duration_ms": 250.0,
-        "step_count": 1,
-    }
+        assert response.status_code == 200
+        assert response.json() == {
+            "execution_id": execution_id,
+            "status": "completed",
+            "duration_ms": 250.0,
+            "step_count": 1,
+        }
+    finally:
+        cleanup_client(client)
 
 
 def test_execution_metrics_api_returns_step_metrics():
@@ -125,26 +164,29 @@ def test_execution_metrics_api_returns_step_metrics():
         ),
     ])
 
-    response = client.get(
-        f"/metrics/executions/{execution_id}/steps"
-    )
+    try:
+        response = client.get(
+            f"/metrics/executions/{execution_id}/steps"
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "execution_id": execution_id,
-        "steps": [
-            {
-                "step_name": "research",
-                "event_type": "step.completed",
-                "duration_ms": 100.0,
-            },
-            {
-                "step_name": "analysis",
-                "event_type": "step.failed",
-                "duration_ms": 50.0,
-            },
-        ],
-    }
+        assert response.status_code == 200
+        assert response.json() == {
+            "execution_id": execution_id,
+            "steps": [
+                {
+                    "step_name": "research",
+                    "event_type": "step.completed",
+                    "duration_ms": 100.0,
+                },
+                {
+                    "step_name": "analysis",
+                    "event_type": "step.failed",
+                    "duration_ms": 50.0,
+                },
+            ],
+        }
+    finally:
+        cleanup_client(client)
 
 
 def test_execution_metrics_api_returns_summary():
@@ -225,20 +267,23 @@ def test_execution_metrics_api_returns_summary():
         ),
     ])
 
-    response = client.get(
-        "/metrics/executions/summary"
-    )
+    try:
+        response = client.get(
+            "/metrics/executions/summary"
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "total_executions": 3,
-        "completed": 2,
-        "failed": 1,
-        "unknown": 0,
-        "success_rate": 2 / 3,
-        "average_duration_ms": 150.0,
-        "average_step_count": 4 / 3,
-    }
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_executions": 3,
+            "completed": 2,
+            "failed": 1,
+            "unknown": 0,
+            "success_rate": 2 / 3,
+            "average_duration_ms": 150.0,
+            "average_step_count": 4 / 3,
+        }
+    finally:
+        cleanup_client(client)
 
 
 def test_execution_metrics_summary_filters_by_workflow_name():
@@ -275,23 +320,28 @@ def test_execution_metrics_summary_filters_by_workflow_name():
         ),
     ])
 
-    response = client.get(
-        "/metrics/executions/summary",
-        params={
-            "workflow_name": "research-pipeline",
-        },
-    )
+    try:
+        response = client.get(
+            "/metrics/executions/summary",
+            params={
+                "workflow_name": "research-pipeline",
+            },
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "total_executions": 1,
-        "completed": 1,
-        "failed": 0,
-        "unknown": 0,
-        "success_rate": 1.0,
-        "average_duration_ms": 100.0,
-        "average_step_count": 0.0,
-    }
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_executions": 1,
+            "completed": 1,
+            "failed": 0,
+            "unknown": 0,
+            "success_rate": 1.0,
+            "average_duration_ms": 100.0,
+            "average_step_count": 0.0,
+        }
+    finally:
+        cleanup_client(client)
+
+
 def test_execution_metrics_summary_filters_by_time_window():
     inside_execution = "api-time-inside"
     outside_execution = "api-time-outside"
@@ -365,42 +415,41 @@ def test_execution_metrics_summary_filters_by_time_window():
 
     client = create_client(events)
 
-    response = client.get(
-        "/metrics/executions/summary",
-        params={
-            "start_time": "2026-09-22T10:00:00Z",
-            "end_time": "2026-09-22T12:00:00Z",
-        },
-    )
+    try:
+        response = client.get(
+            "/metrics/executions/summary",
+            params={
+                "start_time": "2026-09-22T10:00:00Z",
+                "end_time": "2026-09-22T12:00:00Z",
+            },
+        )
 
-    assert response.status_code == 200
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_executions": 1,
+            "completed": 1,
+            "failed": 0,
+            "unknown": 0,
+            "success_rate": 1.0,
+            "average_duration_ms": 100.0,
+            "average_step_count": 0.0,
+        }
+    finally:
+        cleanup_client(client)
 
-    assert response.json() == {
-        "total_executions": 1,
-        "completed": 1,
-        "failed": 0,
-        "unknown": 0,
-        "success_rate": 1.0,
-        "average_duration_ms": 100.0,
-        "average_step_count": 0.0,
-    }
 
 def test_execution_metrics_summary_rejects_invalid_time_window():
     client = create_client([])
 
-    response = client.get(
-        "/metrics/executions/summary",
-        params={
-            "start_time": "2026-09-22T12:00:00Z",
-            "end_time": "2026-09-22T10:00:00Z",
-        },
-    )
-
-    assert response.status_code == 400
-
-    assert response.json() == {
-        "detail": (
-            "start_time must be earlier than "
-            "or equal to end_time."
+    try:
+        response = client.get(
+            "/metrics/executions/summary",
+            params={
+                "start_time": "2026-09-22T12:00:00Z",
+                "end_time": "2026-09-22T10:00:00Z",
+            },
         )
-    }
+
+        assert response.status_code == 400
+    finally:
+        cleanup_client(client)

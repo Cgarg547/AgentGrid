@@ -9,7 +9,7 @@ from app.api.schedules import router as schedule_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api.api_keys import router as api_key_router
-
+from app.api.security_audit import router as security_audit_router
 
 setup_logging()
 
@@ -28,6 +28,7 @@ app.include_router(worker_router)
 app.include_router(metrics_router)
 app.include_router(schedule_router)
 app.include_router(api_key_router)
+app.include_router(security_audit_router)
 
 @app.get("/")
 def root():

@@ -6,11 +6,22 @@ from app.security.scope_auth import require_scope
 from app.security.scopes import APIScope
 from app.services.api_key_repository import APIKeyRepository
 from app.services.api_key_service import APIKeyService
+from app.services.security_audit_repository import SecurityAuditRepository
 
 
 api_key_service = APIKeyService(
     APIKeyRepository(SessionLocal)
 )
+
+audit_repository = SecurityAuditRepository(
+    SessionLocal
+)
+
+
+def get_authorization_events():
+    return audit_repository.list(
+        action="authorization",
+    )
 
 
 def test_scope_authorization_allows_required_scope():
@@ -50,6 +61,31 @@ def test_scope_authorization_allows_required_scope():
         assert response.json() == {
             "status": "allowed"
         }
+
+        events = get_authorization_events()
+
+        matching_events = [
+            event
+            for event in events
+            if event.key_id == api_key.key_id
+            and event.outcome == "allowed"
+        ]
+
+        assert matching_events
+
+        event = matching_events[-1]
+
+        assert event.action == "authorization"
+
+        metadata = (
+            SecurityAuditRepository.deserialize_metadata(
+                event.metadata_json
+            )
+        )
+
+        assert metadata["required_scope"] == (
+            "workflows:execute"
+        )
 
     finally:
         api_key_service.delete_api_key(
@@ -92,7 +128,37 @@ def test_scope_authorization_rejects_missing_scope():
 
         assert response.status_code == 403
         assert response.json()["detail"] == (
-            "Missing required scope: workflows:execute"
+            "Missing required scope: "
+            "workflows:execute"
+        )
+
+        events = get_authorization_events()
+
+        matching_events = [
+            event
+            for event in events
+            if event.key_id == api_key.key_id
+            and event.outcome == "denied"
+        ]
+
+        assert matching_events
+
+        event = matching_events[-1]
+
+        assert event.action == "authorization"
+
+        metadata = (
+            SecurityAuditRepository.deserialize_metadata(
+                event.metadata_json
+            )
+        )
+
+        assert metadata["required_scope"] == (
+            "workflows:execute"
+        )
+
+        assert metadata["reason"] == (
+            "missing_required_scope"
         )
 
     finally:

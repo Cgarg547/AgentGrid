@@ -217,3 +217,103 @@ def test_execution_event_repository_lists_distinct_task_ids():
     finally:
         session.close()
         engine.dispose()
+
+def test_execution_event_repository_lists_by_execution_id():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={
+            "check_same_thread": False,
+        },
+    )
+
+    Base.metadata.create_all(engine)
+
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    session = SessionLocal()
+
+    try:
+        repository = ExecutionEventRepository(session)
+
+        execution_id = "execution-trace-123"
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="task_started",
+                task_id="task-research",
+                execution_id=execution_id,
+                data={
+                    "step_name": "research",
+                },
+            )
+        )
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="task_completed",
+                task_id="task-research",
+                execution_id=execution_id,
+                data={
+                    "step_name": "research",
+                },
+            )
+        )
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="task_started",
+                task_id="task-analysis",
+                execution_id=execution_id,
+                data={
+                    "step_name": "analysis",
+                },
+            )
+        )
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="task_started",
+                task_id="unrelated-task",
+                execution_id="different-execution",
+                data={
+                    "step_name": "unrelated",
+                },
+            )
+        )
+
+        events = repository.list_by_execution_id(
+            execution_id
+        )
+
+        assert len(events) == 3
+
+        assert [
+            event.task_id
+            for event in events
+        ] == [
+            "task-research",
+            "task-research",
+            "task-analysis",
+        ]
+
+        assert [
+            event.event_type
+            for event in events
+        ] == [
+            "task_started",
+            "task_completed",
+            "task_started",
+        ]
+
+        assert all(
+            event.execution_id == execution_id
+            for event in events
+        )
+
+    finally:
+        session.close()
+        engine.dispose()

@@ -216,3 +216,49 @@ def test_api_key_management_requires_authentication():
     response = client.get("/api-keys")
 
     assert response.status_code == 401
+
+def test_api_key_management_enforces_rate_limit():
+    import fakeredis
+    import app.security.rate_limit as rate_limit_module
+
+    app = FastAPI()
+    app.include_router(router)
+
+    client = TestClient(app)
+
+    bootstrap_key, bootstrap_raw_key = create_test_key()
+
+    fake_redis = fakeredis.FakeRedis()
+
+    original_get_redis_client = rate_limit_module.get_redis_client
+    original_rate_limit = rate_limit_module.RATE_LIMIT
+
+    rate_limit_module.get_redis_client = lambda: fake_redis
+    rate_limit_module.RATE_LIMIT = 1
+
+    try:
+        first_response = client.get(
+            "/api-keys",
+            headers={
+                "Authorization": f"Bearer {bootstrap_raw_key}"
+            },
+        )
+
+        second_response = client.get(
+            "/api-keys",
+            headers={
+                "Authorization": f"Bearer {bootstrap_raw_key}"
+            },
+        )
+    finally:
+        rate_limit_module.get_redis_client = original_get_redis_client
+        rate_limit_module.RATE_LIMIT = original_rate_limit
+
+        api_key_service.delete_api_key(
+            bootstrap_key.key_id
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 429
+    assert second_response.json()["detail"] == "Rate limit exceeded."
+    assert second_response.headers["Retry-After"] == "60"

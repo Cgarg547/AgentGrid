@@ -4,6 +4,7 @@ from app.models.execution_checkpoint import ExecutionCheckpoint
 from app.models.execution_event import ExecutionEvent
 from app.models.workflow_schedule import WorkflowSchedule
 from app.models.api_key import APIKey
+from app.models.security_audit_event import SecurityAuditEvent
 
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)

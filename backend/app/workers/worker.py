@@ -75,6 +75,7 @@ class Worker:
                 "step_name": step_name,
                 "agent_name": agent_name,
             },
+            execution_id=execution_id,
         )
 
         existing = self.idempotency_store.get(task_id)
@@ -112,6 +113,7 @@ class Worker:
                 "step_name": step_name,
                 "agent_name": agent_name,
             },
+            execution_id=execution_id,
         )
 
         self.heartbeat_registry.set_state(
@@ -171,6 +173,7 @@ class Worker:
                     "agent_name": agent_name,
                     "attempt": attempt,
                 },
+                execution_id=execution_id,
             )
 
             heartbeat_stop = threading.Event()
@@ -221,6 +224,7 @@ class Worker:
                         "agent_name": agent_name,
                         "attempt": attempt,
                     },
+                    execution_id=execution_id,
                 )
 
                 return result_payload
@@ -336,11 +340,13 @@ class Worker:
         event_type: str,
         task_id: str,
         data: dict[str, Any] | None = None,
+        execution_id: str | None = None,
     ) -> None:
         event = WorkerEvent.create(
             event_type=event_type,
             task_id=task_id,
             data=data,
+            execution_id=execution_id,
         )
 
         self.events.append(event)

@@ -17,6 +17,7 @@ class ExecutionEventRepository:
     ) -> ExecutionEvent:
         record = ExecutionEvent(
             task_id=event.task_id,
+            execution_id=event.execution_id,
             event_type=event.event_type,
             timestamp=event.timestamp,
             data=self._serialize_data(
@@ -62,6 +63,23 @@ class ExecutionEventRepository:
             .all()
         )
 
+    def list_by_execution_id(
+        self,
+        execution_id: str,
+    ) -> list[ExecutionEvent]:
+        return (
+            self.session.query(ExecutionEvent)
+            .filter(
+                ExecutionEvent.execution_id
+                == execution_id
+            )
+            .order_by(
+                ExecutionEvent.timestamp.asc(),
+                ExecutionEvent.id.asc(),
+            )
+            .all()
+        )
+
     def list_task_ids(self) -> list[str]:
         return [
             row[0]
@@ -88,4 +106,3 @@ class ExecutionEventRepository:
         data: str,
     ) -> dict[str, Any]:
         return json.loads(data)
-

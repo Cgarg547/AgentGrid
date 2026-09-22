@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.worker_api import (
     WorkerListResponse,
     WorkerResponse,
 )
+from app.security.scope_auth import require_scope
+from app.security.scopes import APIScope
 from app.workers.heartbeat import WorkerHeartbeatRegistry
 
 
@@ -20,7 +22,13 @@ worker_registry = WorkerHeartbeatRegistry()
     "",
     response_model=WorkerListResponse,
 )
-def list_workers():
+def list_workers(
+    _current_api_key=Depends(
+        require_scope(
+            APIScope.WORKERS_READ
+        )
+    ),
+):
     workers = worker_registry.list_workers()
 
     return {
@@ -33,7 +41,14 @@ def list_workers():
     "/{worker_id}",
     response_model=WorkerResponse,
 )
-def get_worker(worker_id: str):
+def get_worker(
+    worker_id: str,
+    _current_api_key=Depends(
+        require_scope(
+            APIScope.WORKERS_READ
+        )
+    ),
+):
     worker = worker_registry.get(worker_id)
 
     if worker is None:

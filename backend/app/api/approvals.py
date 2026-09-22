@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.approval_api import (
     ApprovalExecutionResponse,
@@ -6,6 +6,8 @@ from app.models.approval_api import (
 )
 from app.runtime import AgentGridRuntime
 from app.security.approval_store import ApprovalStore
+from app.security.protected_api import require_scope_with_rate_limit
+from app.security.scopes import APIScope
 
 
 router = APIRouter(
@@ -19,7 +21,7 @@ approval_store = runtime.approval_store
 executor = runtime.get_approval_executor()
 
 
-def _to_response(request) -> dict:
+def _to_response(request):
     return request.describe()
 
 
@@ -27,7 +29,14 @@ def _to_response(request) -> dict:
     "/{request_id}",
     response_model=ApprovalResponse,
 )
-def get_approval(request_id: str):
+def get_approval(
+    request_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_READ
+        )
+    ),
+):
     request = approval_store.get(request_id)
 
     if request is None:
@@ -46,9 +55,18 @@ def get_approval(request_id: str):
     "/{request_id}/approve",
     response_model=ApprovalExecutionResponse,
 )
-def approve_request(request_id: str):
+def approve_request(
+    request_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_CONTROL
+        )
+    ),
+):
     try:
-        request = approval_store.approve(request_id)
+        request = approval_store.approve(
+            request_id
+        )
 
         execution_result = (
             executor.execute_approved_request(
@@ -87,9 +105,18 @@ def approve_request(request_id: str):
     "/{request_id}/reject",
     response_model=ApprovalResponse,
 )
-def reject_request(request_id: str):
+def reject_request(
+    request_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_CONTROL
+        )
+    ),
+):
     try:
-        request = approval_store.reject(request_id)
+        request = approval_store.reject(
+            request_id
+        )
 
     except KeyError:
         raise HTTPException(

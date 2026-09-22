@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.workflow_schedule_api import (
     WorkflowScheduleCreateRequest,
@@ -6,6 +6,8 @@ from app.models.workflow_schedule_api import (
     WorkflowScheduleResponse,
 )
 from app.runtime import AgentGridRuntime
+from app.security.protected_api import require_scope_with_rate_limit
+from app.security.scopes import APIScope
 
 
 router = APIRouter(
@@ -18,12 +20,12 @@ runtime = AgentGridRuntime()
 schedule_service = runtime.workflow_schedule_service
 
 
-def _to_response(schedule) -> WorkflowScheduleResponse:
+def _to_response(schedule):
     return WorkflowScheduleResponse(
         schedule_id=schedule.schedule_id,
         workflow_name=schedule.workflow_name,
-        next_run_at=schedule.next_run_at,
         enabled=schedule.enabled,
+        next_run_at=schedule.next_run_at,
         created_at=schedule.created_at,
     )
 
@@ -34,13 +36,23 @@ def _to_response(schedule) -> WorkflowScheduleResponse:
 )
 def create_schedule(
     request: WorkflowScheduleCreateRequest,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
 ):
     try:
-        runtime.workflow_registry.get(request.workflow_name)
+        runtime.workflow_registry.get(
+            request.workflow_name
+        )
     except KeyError:
         raise HTTPException(
             status_code=404,
-            detail=f"Workflow '{request.workflow_name}' not found.",
+            detail=(
+                f"Workflow "
+                f"'{request.workflow_name}' not found."
+            ),
         )
 
     schedule = schedule_service.create_schedule(
@@ -57,9 +69,14 @@ def create_schedule(
 )
 def list_schedules(
     enabled: bool | None = None,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
 ):
     schedules = schedule_service.list_schedules(
-        enabled=enabled,
+        enabled=enabled
     )
 
     return {
@@ -75,13 +92,25 @@ def list_schedules(
     "/{schedule_id}",
     response_model=WorkflowScheduleResponse,
 )
-def get_schedule(schedule_id: str):
-    schedule = schedule_service.get_schedule(schedule_id)
+def get_schedule(
+    schedule_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
+):
+    schedule = schedule_service.get_schedule(
+        schedule_id
+    )
 
     if schedule is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Schedule '{schedule_id}' not found.",
+            detail=(
+                f"Schedule "
+                f"'{schedule_id}' not found."
+            ),
         )
 
     return _to_response(schedule)
@@ -91,16 +120,26 @@ def get_schedule(schedule_id: str):
     "/{schedule_id}/enable",
     response_model=WorkflowScheduleResponse,
 )
-def enable_schedule(schedule_id: str):
-    updated = schedule_service.enable_schedule(schedule_id)
+def enable_schedule(
+    schedule_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
+):
+    schedule = schedule_service.enable_schedule(
+        schedule_id
+    )
 
-    if not updated:
+    if schedule is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Schedule '{schedule_id}' not found.",
+            detail=(
+                f"Schedule "
+                f"'{schedule_id}' not found."
+            ),
         )
-
-    schedule = schedule_service.get_schedule(schedule_id)
 
     return _to_response(schedule)
 
@@ -109,16 +148,26 @@ def enable_schedule(schedule_id: str):
     "/{schedule_id}/disable",
     response_model=WorkflowScheduleResponse,
 )
-def disable_schedule(schedule_id: str):
-    updated = schedule_service.disable_schedule(schedule_id)
+def disable_schedule(
+    schedule_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
+):
+    schedule = schedule_service.disable_schedule(
+        schedule_id
+    )
 
-    if not updated:
+    if schedule is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Schedule '{schedule_id}' not found.",
+            detail=(
+                f"Schedule "
+                f"'{schedule_id}' not found."
+            ),
         )
-
-    schedule = schedule_service.get_schedule(schedule_id)
 
     return _to_response(schedule)
 
@@ -126,15 +175,25 @@ def disable_schedule(schedule_id: str):
 @router.delete(
     "/{schedule_id}",
 )
-def delete_schedule(schedule_id: str):
+def delete_schedule(
+    schedule_id: str,
+    _current_api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
+):
     deleted = schedule_service.delete_schedule(
-        schedule_id,
+        schedule_id
     )
 
     if not deleted:
         raise HTTPException(
             status_code=404,
-            detail=f"Schedule '{schedule_id}' not found.",
+            detail=(
+                f"Schedule "
+                f"'{schedule_id}' not found."
+            ),
         )
 
     return {

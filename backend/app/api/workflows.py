@@ -15,8 +15,19 @@ from app.runtime import AgentGridRuntime
 from app.services.execution_event_repository import (
     ExecutionEventRepository,
 )
-from app.security.api_key_auth import require_api_key
-from app.security.scope_auth import require_scope
+from app.services.security_audit_repository import (
+    SecurityAuditRepository,
+)
+from app.models.execution_trace import (
+    ExecutionTraceResponse,
+)
+from app.services.execution_trace_service import (
+    ExecutionTraceService,
+)
+from app.services.security_audit_service import (
+    SecurityAuditService,
+)
+from app.security.protected_api import require_scope_with_rate_limit
 from app.security.scopes import APIScope
 
 router = APIRouter(
@@ -26,6 +37,10 @@ router = APIRouter(
 
 runtime = AgentGridRuntime()
 
+security_audit_service = SecurityAuditService(
+    SecurityAuditRepository(SessionLocal)
+)
+
 
 @router.get(
     "",
@@ -33,7 +48,7 @@ runtime = AgentGridRuntime()
 )
 def list_workflows(
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.WORKERS_READ
         )
     ),
@@ -53,7 +68,7 @@ def list_workflows(
 def execute_workflow(
     workflow_name: str,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.WORKFLOWS_EXECUTE
         )
     ),
@@ -63,10 +78,34 @@ def execute_workflow(
             workflow_name
         )
     except KeyError:
+        security_audit_service.record_event(
+            key_id=api_key.key_id,
+            action="workflow.execute",
+            resource=workflow_name,
+            endpoint=(
+                "POST "
+                "/workflows/{workflow_name}/execute"
+            ),
+            outcome="not_found"
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Workflow '{workflow_name}' not found.",
         )
+
+    security_audit_service.record_event(
+        key_id=api_key.key_id,
+        action="workflow.execute",
+        resource=workflow_name,
+        endpoint=(
+            "POST "
+            "/workflows/{workflow_name}/execute"
+        ),
+        outcome="allowed",
+        metadata={
+            "execution_id": execution.execution_id,
+        },
+    )
 
     return {
         "execution_id": execution.execution_id,
@@ -84,7 +123,7 @@ def execute_workflow_distributed(
     workflow_name: str,
     request: WorkflowExecutionRequest,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.WORKFLOWS_EXECUTE
         )
     ),    
@@ -95,10 +134,34 @@ def execute_workflow_distributed(
             inputs=request.inputs,
         )
     except KeyError:
+        security_audit_service.record_event(
+            key_id=api_key.key_id,
+            action="workflow.execute.distributed",
+            resource=workflow_name,
+            endpoint=(
+                "POST "
+                "/workflows/{workflow_name}/execute/distributed"
+            ),
+            outcome="not_found",
+        )
         raise HTTPException(
             status_code=404,
             detail=f"Workflow '{workflow_name}' not found.",
         )
+
+    security_audit_service.record_event(
+        key_id=api_key.key_id,
+        action="workflow.execute.distributed",
+        resource=workflow_name,
+        endpoint=(
+            "POST "
+            "/workflows/{workflow_name}/execute/distributed"
+        ),
+        outcome="allowed",
+        metadata={
+            "execution_id": execution.execution_id,
+        },
+    )
 
     return {
         "execution_id": execution.execution_id,
@@ -115,7 +178,7 @@ def execute_workflow_distributed(
 def get_execution(
     execution_id: str,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.EXECUTIONS_READ
         )
     ),    
@@ -149,7 +212,7 @@ def get_execution(
 def pause_execution(
     execution_id: str,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.EXECUTIONS_CONTROL
         )
     ),
@@ -189,7 +252,7 @@ def pause_execution(
 def resume_execution(
     execution_id: str,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.EXECUTIONS_CONTROL
         )
     ),    
@@ -230,7 +293,7 @@ def get_execution_events(
     execution_id: str,
     event_type: str | None = None,
     api_key=Depends(
-        require_scope(
+        require_scope_with_rate_limit(
             APIScope.EXECUTIONS_READ
         )
     ),
@@ -242,15 +305,16 @@ def get_execution_events(
             session
         )
 
-        if event_type is None:
-            events = repository.list_by_task(
-                execution_id
-            )
-        else:
-            events = repository.list_by_task_and_type(
-                execution_id,
-                event_type,
-            )
+        events = repository.list_by_execution_id(
+            execution_id
+        )
+
+        if event_type is not None:
+            events = [
+                event
+                for event in events
+                if event.event_type == event_type
+            ]
 
         return {
             "task_id": execution_id,
@@ -267,6 +331,36 @@ def get_execution_events(
                 for event in events
             ],
         }
+
+    finally:
+        session.close()
+
+@router.get(
+    "/executions/{execution_id}/trace",
+    response_model=ExecutionTraceResponse,
+)
+def get_execution_trace(
+    execution_id: str,
+    api_key=Depends(
+        require_scope_with_rate_limit(
+            APIScope.EXECUTIONS_READ
+        )
+    ),
+):
+    session = SessionLocal()
+
+    try:
+        repository = ExecutionEventRepository(
+            session
+        )
+
+        service = ExecutionTraceService(
+            repository
+        )
+
+        return service.get_trace(
+            execution_id
+        )
 
     finally:
         session.close()

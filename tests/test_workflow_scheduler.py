@@ -99,10 +99,16 @@ def test_enable_and_disable_schedule():
 
     assert schedule.enabled is True
 
-    assert service.disable_schedule(schedule.schedule_id) is True
+    disabled_schedule = service.disable_schedule(schedule.schedule_id)
+
+    assert disabled_schedule is not None
+    assert disabled_schedule.enabled is False
     assert service.get_schedule(schedule.schedule_id).enabled is False
 
-    assert service.enable_schedule(schedule.schedule_id) is True
+    enabled_schedule = service.enable_schedule(schedule.schedule_id)
+
+    assert enabled_schedule is not None
+    assert enabled_schedule.enabled is True
     assert service.get_schedule(schedule.schedule_id).enabled is True
 
 

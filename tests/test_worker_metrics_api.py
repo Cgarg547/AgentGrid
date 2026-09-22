@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
-
+from uuid import uuid4
 from app.main import app
 from app.api.metrics import get_worker_metrics
+from app.core.database import SessionLocal
+from app.services.api_key_repository import APIKeyRepository
+from app.services.api_key_service import APIKeyService
 from app.workers.dead_letter import DeadLetterQueue
 from app.workers.heartbeat import WorkerHeartbeatRegistry
 from app.workers.metrics import WorkerMetrics
@@ -9,21 +12,43 @@ from app.workers.queue import TaskQueue
 from app.workers.result_queue import TaskResultQueue
 
 
+api_key_service = APIKeyService(
+    APIKeyRepository(SessionLocal)
+)
+
+
 def create_test_metrics() -> WorkerMetrics:
+    test_id = uuid4().hex
+
     return WorkerMetrics(
         task_queue=TaskQueue(
-            "test:api:metrics:tasks"
+            f"test:api:metrics:tasks:(test_id)"
         ),
         result_queue=TaskResultQueue(
-            "test:api:metrics:results"
+            f"test:api:metrics:results:(test_id)"
         ),
         dead_letter_queue=DeadLetterQueue(
-            "test:api:metrics:dead-letter"
+            f"test:api:metrics:dead-letter:{test_id}"
         ),
         heartbeat_registry=WorkerHeartbeatRegistry(
-            key_prefix="test:api:metrics:workers"
+            key_prefix=f"test:api:metrics:workers:{test_id}"
         ),
     )
+
+
+def create_test_key():
+    return api_key_service.create_api_key(
+        "worker-metrics-api-test",
+        scopes=[
+            "workers:read",
+        ],
+    )
+
+
+def auth_headers(raw_key: str):
+    return {
+        "Authorization": f"Bearer {raw_key}"
+    }
 
 
 def test_queue_metrics_api():
@@ -33,18 +58,28 @@ def test_queue_metrics_api():
         get_worker_metrics
     ] = lambda: metrics
 
-    client = TestClient(app)
+    test_key, raw_key = create_test_key()
 
-    response = client.get("/metrics/queues")
+    try:
+        client = TestClient(app)
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "tasks": 0,
-        "results": 0,
-        "dead_letter": 0,
-    }
+        response = client.get(
+            "/metrics/queues",
+            headers=auth_headers(raw_key),
+        )
 
-    app.dependency_overrides.clear()
+        assert response.status_code == 200
+        assert response.json() == {
+            "tasks": 0,
+            "results": 0,
+            "dead_letter": 0,
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+        api_key_service.delete_api_key(
+            test_key.key_id
+        )
 
 
 def test_worker_metrics_api():
@@ -58,23 +93,32 @@ def test_worker_metrics_api():
         get_worker_metrics
     ] = lambda: metrics
 
-    client = TestClient(app)
+    test_key, raw_key = create_test_key()
 
-    response = client.get("/metrics/workers")
+    try:
+        client = TestClient(app)
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "total": 1,
-        "idle": 1,
-        "running": 0,
-        "utilization": 0.0,
-    }
+        response = client.get(
+            "/metrics/workers",
+            headers=auth_headers(raw_key),
+        )
 
-    metrics.heartbeat_registry.unregister(
-        "api-worker"
-    )
+        assert response.status_code == 200
+        assert response.json() == {
+            "total": 1,
+            "idle": 1,
+            "running": 0,
+            "utilization": 0.0,
+        }
 
-    app.dependency_overrides.clear()
+    finally:
+        metrics.heartbeat_registry.unregister(
+            "api-worker"
+        )
+        app.dependency_overrides.clear()
+        api_key_service.delete_api_key(
+            test_key.key_id
+        )
 
 
 def test_metrics_snapshot_api():
@@ -93,27 +137,77 @@ def test_metrics_snapshot_api():
         get_worker_metrics
     ] = lambda: metrics
 
-    client = TestClient(app)
+    test_key, raw_key = create_test_key()
 
-    response = client.get("/metrics")
+    try:
+        client = TestClient(app)
 
-    assert response.status_code == 200
+        response = client.get(
+            "/metrics",
+            headers=auth_headers(raw_key),
+        )
 
-    assert response.json() == {
-        "queues": {
-            "tasks": 1,
-            "results": 1,
-            "dead_letter": 0,
-        },
-        "workers": {
-            "total": 0,
-            "idle": 0,
-            "running": 0,
-            "utilization": 0.0,
-        },
-    }
+        assert response.status_code == 200
 
-    metrics.task_queue.dequeue()
-    metrics.result_queue.consume()
+        assert response.json() == {
+            "queues": {
+                "tasks": 1,
+                "results": 1,
+                "dead_letter": 0,
+            },
+            "workers": {
+                "total": 0,
+                "idle": 0,
+                "running": 0,
+                "utilization": 0.0,
+            },
+        }
 
-    app.dependency_overrides.clear()
+        metrics.task_queue.dequeue()
+        metrics.result_queue.consume()
+
+    finally:
+        app.dependency_overrides.clear()
+        api_key_service.delete_api_key(
+            test_key.key_id
+        )
+
+def test_metrics_api_enforces_rate_limit():
+    import fakeredis
+    import app.security.rate_limit as rate_limit_module
+
+    test_key, raw_key = create_test_key()
+
+    fake_redis = fakeredis.FakeRedis()
+
+    original_get_redis_client = rate_limit_module.get_redis_client
+    original_rate_limit = rate_limit_module.RATE_LIMIT
+
+    rate_limit_module.get_redis_client = lambda: fake_redis
+    rate_limit_module.RATE_LIMIT = 1
+
+    try:
+        client = TestClient(app)
+
+        first_response = client.get(
+            "/metrics/queues",
+            headers=auth_headers(raw_key),
+        )
+
+        second_response = client.get(
+            "/metrics/queues",
+            headers=auth_headers(raw_key),
+        )
+
+    finally:
+        rate_limit_module.get_redis_client = original_get_redis_client
+        rate_limit_module.RATE_LIMIT = original_rate_limit
+
+        api_key_service.delete_api_key(
+            test_key.key_id
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 429
+    assert second_response.json()["detail"] == "Rate limit exceeded."
+    assert second_response.headers["Retry-After"] == "60"
