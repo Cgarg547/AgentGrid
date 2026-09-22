@@ -20,6 +20,16 @@ from app.services.execution_checkpoint_repository import (
 from app.services.distributed_workflow_executor import (
     DistributedWorkflowExecutor,
 )
+from app.services.workflow_schedule_repository import (
+    WorkflowScheduleRepository,
+)
+from app.services.workflow_schedule_service import (
+    WorkflowScheduleService,
+)
+from app.services.workflow_scheduler_loop import (
+    WorkflowSchedulerLoop,
+)
+from app.services.workflow_scheduler import WorkflowScheduler
 from app.services.task_dispatcher import TaskDispatcher
 from app.workers.queue import TaskQueue
 from app.workers.result_queue import TaskResultQueue
@@ -45,7 +55,12 @@ class AgentGridRuntime:
         self.workflow_repository = (
             PostgresWorkflowRepository(SessionLocal)
         )
-
+        self.workflow_schedule_repository = (
+            WorkflowScheduleRepository(SessionLocal)
+        )
+        self.workflow_schedule_service = WorkflowScheduleService(
+            self.workflow_schedule_repository
+        )
         self.distributed_task_queue = TaskQueue(
             "agentgrid:workflow:tasks"
         )
@@ -74,6 +89,15 @@ class AgentGridRuntime:
             self.workflow_registry,
             self.agent_handlers,
             self.execution_repository,
+        )
+
+        self.workflow_scheduler = WorkflowScheduler(
+            repository=self.workflow_schedule_repository,
+            workflow_executor=self.execute_workflow_distributed,
+        )
+
+        self.workflow_scheduler_loop = WorkflowSchedulerLoop(
+            scheduler=self.workflow_scheduler,
         )
 
         self._register_agents()
@@ -335,3 +359,9 @@ class AgentGridRuntime:
         return {
             "report": analysis["analysis"],
         }
+
+    def start_scheduler(self) -> None:
+        self.workflow_scheduler_loop.start()
+
+    def stop_scheduler(self) -> None:
+        self.workflow_scheduler_loop.stop()

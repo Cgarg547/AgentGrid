@@ -54,32 +54,53 @@ class WorkerHeartbeatRegistry:
     ) -> bool:
         key = self._build_key(worker_id)
 
-        value = redis_client.get(key)
+        script = """
+        local value = redis.call('GET', KEYS[1])
 
-        if value is None:
-            return False
+        if not value then
+            return 0
+        end
 
-        record = json.loads(value)
+        local record = cjson.decode(value)
 
-        if record.get("worker_id") != worker_id:
-            return False
+        if record['worker_id'] ~= ARGV[1] then
+            return 0
+        end
 
-        record["status"] = "alive"
-        record["last_heartbeat"] = time.time()
+        record['status'] = 'alive'
+        record['last_heartbeat'] = tonumber(ARGV[2])
 
-        if state is not None:
-            record["state"] = state
+        if ARGV[3] ~= '' then
+            record['state'] = ARGV[3]
+        end
 
-        if metadata is not None:
-            record["metadata"] = metadata
+        if ARGV[4] ~= '' then
+            record['metadata'] = cjson.decode(ARGV[4])
+        end
 
-        return bool(
-            redis_client.set(
-                key,
-                json.dumps(record),
-                ex=self.heartbeat_ttl_seconds,
-            )
+        redis.call(
+            'SET',
+            KEYS[1],
+            cjson.encode(record),
+            'EX',
+            ARGV[5]
         )
+
+        return 1
+        """
+
+        result = redis_client.eval(
+            script,
+            1,
+            key,
+            worker_id,
+            time.time(),
+            state or "",
+            json.dumps(metadata) if metadata is not None else "",
+            self.heartbeat_ttl_seconds,
+        )
+
+        return bool(result)
 
     def set_state(
         self,
@@ -89,30 +110,50 @@ class WorkerHeartbeatRegistry:
     ) -> bool:
         key = self._build_key(worker_id)
 
-        value = redis_client.get(key)
+        script = """
+        local value = redis.call('GET', KEYS[1])
 
-        if value is None:
-            return False
+        if not value then
+            return 0
+        end
 
-        record = json.loads(value)
+        local record = cjson.decode(value)
 
-        if record.get("worker_id") != worker_id:
-            return False
+        if record['worker_id'] ~= ARGV[1] then
+            return 0
+        end
 
-        record["state"] = state
-        record["status"] = "alive"
-        record["last_heartbeat"] = time.time()
+        record['state'] = ARGV[2]
+        record['status'] = 'alive'
+        record['last_heartbeat'] = tonumber(ARGV[3])
 
-        if metadata is not None:
-            record["metadata"] = metadata
+        if ARGV[4] ~= '' then
+            record['metadata'] = cjson.decode(ARGV[4])
+        end
 
-        return bool(
-            redis_client.set(
-                key,
-                json.dumps(record),
-                ex=self.heartbeat_ttl_seconds,
-            )
+        redis.call(
+            'SET',
+            KEYS[1],
+            cjson.encode(record),
+            'EX',
+            ARGV[5]
         )
+
+        return 1
+        """
+
+        result = redis_client.eval(
+            script,
+            1,
+            key,
+            worker_id,
+            state,
+            time.time(),
+            json.dumps(metadata) if metadata is not None else "",
+            self.heartbeat_ttl_seconds,
+        )
+
+        return bool(result)
 
     def get(
         self,

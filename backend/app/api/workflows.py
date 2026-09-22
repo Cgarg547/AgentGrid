@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.database import SessionLocal
 from app.models.execution import (
@@ -15,6 +15,9 @@ from app.runtime import AgentGridRuntime
 from app.services.execution_event_repository import (
     ExecutionEventRepository,
 )
+from app.security.api_key_auth import require_api_key
+from app.security.scope_auth import require_scope
+from app.security.scopes import APIScope
 
 router = APIRouter(
     prefix="/workflows",
@@ -28,7 +31,13 @@ runtime = AgentGridRuntime()
     "",
     response_model=WorkflowListResponse,
 )
-def list_workflows():
+def list_workflows(
+    api_key=Depends(
+        require_scope(
+            APIScope.WORKERS_READ
+        )
+    ),
+):
     return {
         "workflows": [
             workflow.describe()
@@ -41,7 +50,14 @@ def list_workflows():
     "/{workflow_name}/execute",
     response_model=WorkflowExecutionResponse,
 )
-def execute_workflow(workflow_name: str):
+def execute_workflow(
+    workflow_name: str,
+    api_key=Depends(
+        require_scope(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),
+):
     try:
         execution = runtime.execute_workflow(
             workflow_name
@@ -67,6 +83,11 @@ def execute_workflow(workflow_name: str):
 def execute_workflow_distributed(
     workflow_name: str,
     request: WorkflowExecutionRequest,
+    api_key=Depends(
+        require_scope(
+            APIScope.WORKFLOWS_EXECUTE
+        )
+    ),    
 ):
     try:
         execution = runtime.execute_workflow_distributed(
@@ -91,7 +112,14 @@ def execute_workflow_distributed(
     "/executions/{execution_id}",
     response_model=WorkflowExecutionDetailResponse,
 )
-def get_execution(execution_id: str):
+def get_execution(
+    execution_id: str,
+    api_key=Depends(
+        require_scope(
+            APIScope.EXECUTIONS_READ
+        )
+    ),    
+):
     execution = runtime.get_execution(
         execution_id
     )
@@ -118,7 +146,14 @@ def get_execution(execution_id: str):
     "/executions/{execution_id}/pause",
     response_model=WorkflowExecutionDetailResponse,
 )
-def pause_execution(execution_id: str):
+def pause_execution(
+    execution_id: str,
+    api_key=Depends(
+        require_scope(
+            APIScope.EXECUTIONS_CONTROL
+        )
+    ),
+):
     try:
         execution = runtime.pause_execution(
             execution_id
@@ -151,7 +186,14 @@ def pause_execution(execution_id: str):
     "/executions/{execution_id}/resume",
     response_model=WorkflowExecutionDetailResponse,
 )
-def resume_execution(execution_id: str):
+def resume_execution(
+    execution_id: str,
+    api_key=Depends(
+        require_scope(
+            APIScope.EXECUTIONS_CONTROL
+        )
+    ),    
+):
     try:
         execution = runtime.resume_execution(
             execution_id
@@ -187,6 +229,11 @@ def resume_execution(execution_id: str):
 def get_execution_events(
     execution_id: str,
     event_type: str | None = None,
+    api_key=Depends(
+        require_scope(
+            APIScope.EXECUTIONS_READ
+        )
+    ),
 ):
     session = SessionLocal()
 

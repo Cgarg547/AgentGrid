@@ -161,3 +161,59 @@ def test_execution_event_repository_filters_by_event_type():
     finally:
         session.close()
         engine.dispose()
+
+def test_execution_event_repository_lists_distinct_task_ids():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={
+            "check_same_thread": False,
+        },
+    )
+
+    Base.metadata.create_all(engine)
+
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    session = SessionLocal()
+
+    try:
+        repository = ExecutionEventRepository(session)
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="workflow.started",
+                task_id="execution-b",
+                data={},
+            )
+        )
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="step.completed",
+                task_id="execution-a",
+                data={},
+            )
+        )
+
+        repository.save(
+            WorkerEvent.create(
+                event_type="workflow.completed",
+                task_id="execution-b",
+                data={},
+            )
+        )
+
+        task_ids = repository.list_task_ids()
+
+        assert task_ids == [
+            "execution-a",
+            "execution-b",
+        ]
+
+    finally:
+        session.close()
+        engine.dispose()

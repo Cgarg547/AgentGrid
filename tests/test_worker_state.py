@@ -1,5 +1,5 @@
 from uuid import uuid4
-
+from app.workers.dead_letter import DeadLetterQueue
 from app.workers.heartbeat import WorkerHeartbeatRegistry
 from app.workers.idempotency import IdempotencyStore
 from app.workers.queue import TaskQueue
@@ -136,3 +136,43 @@ def test_worker_can_unregister_itself():
     assert registry.is_alive(
         worker.owner_id
     ) is False
+
+def test_worker_becomes_idle_after_unknown_agent():
+    heartbeat_registry = WorkerHeartbeatRegistry(
+        key_prefix="test:unknown:agent:workers"
+    )
+
+    worker = Worker(
+        queue=TaskQueue(
+            "test:unknown:agent:queue:v2"
+        ),
+        agent_handlers={},
+        heartbeat_registry=heartbeat_registry,
+        dead_letter_queue=DeadLetterQueue(
+            "test:unknown:agent:dead-letter:v2"
+        ),
+        idempotency_store=IdempotencyStore(
+        key_prefix="test:unknown:agent:idempotency:v2"
+        ),
+    )
+
+    worker.queue.enqueue({
+        "task_id": "unknown-agent-task",
+        "step_name": "unknown-step",
+        "agent_name": "missing-agent",
+    })
+
+    try:
+        result = worker.process_one()
+
+        assert result is not None
+        assert result["status"] == "dead_lettered"
+
+        worker_state = heartbeat_registry.get(
+            worker.owner_id
+        )
+
+        assert worker_state is not None
+        assert worker_state["state"] == "idle"
+    finally:
+        worker.stop()

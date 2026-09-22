@@ -11,12 +11,12 @@ from app.main import app
 from app.models.database import Base
 from app.models.execution_event import ExecutionEvent
 from app.runtime import AgentGridRuntime
+from app.services.api_key_repository import APIKeyRepository
+from app.services.api_key_service import APIKeyService
 from app.services.execution_event_repository import (
     ExecutionEventRepository,
 )
 from app.workflows.examples import create_research_workflow
-from app.workflows.registry import WorkflowRegistry
-from app.workflows.workflow import Workflow
 from app.workers.idempotency import IdempotencyStore
 from app.workers.queue import TaskQueue
 from app.workers.worker import Worker
@@ -24,20 +24,34 @@ from app.workers.worker import Worker
 
 client = TestClient(app)
 
+api_key_service = APIKeyService(
+    APIKeyRepository(SessionLocal)
+)
+
+
+def create_test_api_key():
+    api_key, raw_key = api_key_service.create_api_key(
+        "execution-event-api-test"
+    )
+
+    return api_key, raw_key
+
 
 def test_get_execution_events_from_real_worker():
+    api_key, raw_key = create_test_api_key()
+
     engine = create_engine(
         settings.database_url,
         pool_pre_ping=True,
     )
 
-    SessionLocal = sessionmaker(
+    TestSessionLocal = sessionmaker(
         bind=engine,
         autoflush=False,
         autocommit=False,
     )
 
-    session = SessionLocal()
+    session = TestSessionLocal()
 
     task_id = f"api-event-{uuid.uuid4()}"
 
@@ -78,7 +92,10 @@ def test_get_execution_events_from_real_worker():
         assert result["status"] == "completed"
 
         response = client.get(
-            f"/workflows/executions/{task_id}/events"
+            f"/workflows/executions/{task_id}/events",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
         )
 
         assert response.status_code == 200
@@ -113,9 +130,13 @@ def test_get_execution_events_from_real_worker():
         }
 
     finally:
+        api_key_service.delete_api_key(
+            api_key.key_id
+        )
+
         session.close()
 
-        cleanup_session = SessionLocal()
+        cleanup_session = TestSessionLocal()
 
         try:
             cleanup_session.query(
@@ -132,6 +153,8 @@ def test_get_execution_events_from_real_worker():
 
 
 def test_get_execution_events_from_langgraph_execution():
+    api_key, raw_key = create_test_api_key()
+
     runtime = AgentGridRuntime()
 
     workflow = create_research_workflow()
@@ -157,7 +180,10 @@ def test_get_execution_events_from_langgraph_execution():
 
         response = client.get(
             f"/workflows/executions/"
-            f"{execution.execution_id}/events"
+            f"{execution.execution_id}/events",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
         )
 
         assert response.status_code == 200
@@ -215,10 +241,16 @@ def test_get_execution_events_from_langgraph_execution():
         ] >= 0
 
     finally:
+        api_key_service.delete_api_key(
+            api_key.key_id
+        )
+
         session.close()
 
 
 def test_get_execution_events_filtered_by_event_type():
+    api_key, raw_key = create_test_api_key()
+
     session = SessionLocal()
 
     try:
@@ -249,7 +281,10 @@ def test_get_execution_events_filtered_by_event_type():
                 f"/workflows/executions/"
                 f"{execution.execution_id}/events"
                 f"?event_type=step.completed"
-            )
+            ),
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
         )
 
         assert response.status_code == 200
@@ -281,102 +316,134 @@ def test_get_execution_events_filtered_by_event_type():
         ]
 
     finally:
+        api_key_service.delete_api_key(
+            api_key.key_id
+        )
+
         session.close()
 
 
 def test_execute_workflow_api_persists_langgraph_events():
+    api_key, raw_key = create_test_api_key()
+
     workflow_name = "research-pipeline"
 
-    response = client.post(
-        f"/workflows/{workflow_name}/execute"
-    )
+    try:
+        response = client.post(
+            f"/workflows/{workflow_name}/execute",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
+        )
 
-    assert response.status_code == 200
+        assert response.status_code == 200
 
-    body = response.json()
+        body = response.json()
 
-    execution_id = body["execution_id"]
+        execution_id = body["execution_id"]
 
-    events_response = client.get(
-        f"/workflows/executions/"
-        f"{execution_id}/events"
-    )
+        events_response = client.get(
+            f"/workflows/executions/"
+            f"{execution_id}/events",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
+        )
 
-    assert events_response.status_code == 200
+        assert events_response.status_code == 200
 
-    events = events_response.json()["events"]
+        events = events_response.json()["events"]
 
-    event_types = [
-        event["event_type"]
-        for event in events
-    ]
+        event_types = [
+            event["event_type"]
+            for event in events
+        ]
 
-    assert event_types == [
-        "workflow.started",
-        "step.started",
-        "step.completed",
-        "step.started",
-        "step.completed",
-        "step.started",
-        "step.completed",
-        "workflow.completed",
-    ]
+        assert event_types == [
+            "workflow.started",
+            "step.started",
+            "step.completed",
+            "step.started",
+            "step.completed",
+            "step.started",
+            "step.completed",
+            "workflow.completed",
+        ]
+
+    finally:
+        api_key_service.delete_api_key(
+            api_key.key_id
+        )
 
 
 def test_execution_events_include_timing_metadata():
-    response = client.post(
-        "/workflows/research-pipeline/execute"
-    )
+    api_key, raw_key = create_test_api_key()
 
-    assert response.status_code == 200
-
-    execution_id = response.json()["execution_id"]
-
-    events_response = client.get(
-        f"/workflows/executions/"
-        f"{execution_id}/events"
-    )
-
-    assert events_response.status_code == 200
-
-    events = events_response.json()["events"]
-
-    assert len(events) == 8
-
-    workflow_started = events[0]
-    workflow_completed = events[-1]
-
-    assert workflow_started["event_type"] == (
-        "workflow.started"
-    )
-
-    assert workflow_completed["event_type"] == (
-        "workflow.completed"
-    )
-
-    assert "started_at" in (
-        workflow_started["data"]
-    )
-
-    assert "completed_at" in (
-        workflow_completed["data"]
-    )
-
-    step_completed_events = [
-        event
-        for event in events
-        if event["event_type"]
-        == "step.completed"
-    ]
-
-    assert len(step_completed_events) == 3
-
-    for event in step_completed_events:
-        assert "duration_ms" in event["data"]
-
-        assert isinstance(
-            event["data"]["duration_ms"],
-            (int, float),
+    try:
+        response = client.post(
+            "/workflows/research-pipeline/execute",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
         )
 
-        assert event["data"]["duration_ms"] > 0
+        assert response.status_code == 200
+
+        execution_id = response.json()["execution_id"]
+
+        events_response = client.get(
+            f"/workflows/executions/"
+            f"{execution_id}/events",
+            headers={
+                "Authorization": f"Bearer {raw_key}"
+            },
+        )
+
+        assert events_response.status_code == 200
+
+        events = events_response.json()["events"]
+
+        assert len(events) == 8
+
+        workflow_started = events[0]
+        workflow_completed = events[-1]
+
+        assert workflow_started["event_type"] == (
+            "workflow.started"
+        )
+
+        assert workflow_completed["event_type"] == (
+            "workflow.completed"
+        )
+
+        assert "started_at" in (
+            workflow_started["data"]
+        )
+
+        assert "completed_at" in (
+            workflow_completed["data"]
+        )
+
+        step_completed_events = [
+            event
+            for event in events
+            if event["event_type"]
+            == "step.completed"
+        ]
+
+        assert len(step_completed_events) == 3
+
+        for event in step_completed_events:
+            assert "duration_ms" in event["data"]
+
+            assert isinstance(
+                event["data"]["duration_ms"],
+                (int, float),
+            )
+
+            assert event["data"]["duration_ms"] > 0
+
+    finally:
+        api_key_service.delete_api_key(
+            api_key.key_id
+        )

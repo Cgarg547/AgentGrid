@@ -62,6 +62,21 @@ class ExecutionEventRepository:
             .all()
         )
 
+    def list_task_ids(self) -> list[str]:
+        return [
+            row[0]
+            for row in (
+                self.session.query(
+                    ExecutionEvent.task_id
+                )
+                .distinct()
+                .order_by(
+                    ExecutionEvent.task_id.asc()
+                )
+                .all()
+            )
+        ]
+
     @staticmethod
     def _serialize_data(
         data: dict[str, Any],
@@ -73,3 +88,4 @@ class ExecutionEventRepository:
         data: str,
     ) -> dict[str, Any]:
         return json.loads(data)
+

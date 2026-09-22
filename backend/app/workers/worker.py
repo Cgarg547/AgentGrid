@@ -48,6 +48,14 @@ class Worker:
         self.event_repository = event_repository
         self.result_queue = result_queue
         self.events: list[WorkerEvent] = []
+        self._lifecycle_stop_event = threading.Event()
+
+        self._lifecycle_heartbeat_thread = threading.Thread(
+            target=self._lifecycle_heartbeat,
+            daemon=True,
+        )
+
+        self._lifecycle_heartbeat_thread.start()
 
     def process_one(self) -> dict[str, Any] | None:
         task = self.queue.dequeue()
@@ -143,7 +151,11 @@ class Worker:
             )
 
             self.dead_letter_queue.enqueue(result)
-
+            
+            self.heartbeat_registry.set_state(
+                self.owner_id,
+                "idle",
+            )
             return result
 
         attempt = 0
@@ -309,6 +321,12 @@ class Worker:
                 )
                 
     def stop(self) -> None:
+        self._lifecycle_stop_event.set()
+
+        self._lifecycle_heartbeat_thread.join(
+            timeout=1
+        )
+
         self.heartbeat_registry.unregister(
             self.owner_id
         )
@@ -329,6 +347,17 @@ class Worker:
 
         if self.event_repository is not None:
             self.event_repository.save(event)
+
+    def _lifecycle_heartbeat(self) -> None:
+        interval = max(
+            self.heartbeat_registry.heartbeat_ttl_seconds / 3,
+            0.1,
+        )
+
+        while not self._lifecycle_stop_event.wait(interval):
+            self.heartbeat_registry.heartbeat(
+                self.owner_id,
+            )
 
     def _heartbeat(
         self,
