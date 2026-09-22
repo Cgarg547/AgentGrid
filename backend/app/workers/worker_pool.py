@@ -78,6 +78,9 @@ class WorkerPool:
         for thread in self._threads:
             thread.join(timeout=2)
 
+        for worker in self.workers:
+            worker.stop()
+
         self._threads.clear()
 
     def _run_worker_loop(self, worker: Worker) -> None:

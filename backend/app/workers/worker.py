@@ -106,6 +106,16 @@ class Worker:
             },
         )
 
+        self.heartbeat_registry.set_state(
+            self.owner_id,
+            "running",
+            metadata={
+                "task_id": task_id,
+                "step_name": step_name,
+                "agent_name": agent_name,
+            },
+        )
+
         handler = self.agent_handlers.get(agent_name)
 
         if handler is None:
@@ -292,6 +302,16 @@ class Worker:
             finally:
                 heartbeat_stop.set()
                 heartbeat_thread.join(timeout=1)
+
+                self.heartbeat_registry.set_state(
+                    self.owner_id,
+                    "idle",
+                )
+                
+    def stop(self) -> None:
+        self.heartbeat_registry.unregister(
+            self.owner_id
+        )
 
     def _record_event(
         self,
